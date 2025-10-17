@@ -100,19 +100,6 @@ public class JulesDevController extends LinearOpMode {
     /**
      * Parses the command string and calls the appropriate robot action.
      * @param command The command string from the client (e.g., "DRIVE_FORWARD_1.5T_0.5P")
-     * @param streamBus Optional live stream bus used to mirror command execution to clients.
-     */
-    private void parseAndExecute(String command, JulesStreamBus streamBus) {
-        if (command == null) {
-            return;
-        }
-
-        String sanitized = command.trim();
-        if (sanitized.isEmpty()) {
-            return;
-        }
-
-        String upper = sanitized.toUpperCase(Locale.US);
      */
     private void parseAndExecute(String commandRaw) {
         if (commandRaw == null) {
@@ -132,17 +119,6 @@ public class JulesDevController extends LinearOpMode {
         double magnitude = Math.abs(power);
 
         if (upper.startsWith("DRIVE_FORWARD")) {
-            executeMovement(duration, magnitude, 0, 0, sanitized, streamBus);
-        } else if (upper.startsWith("DRIVE_BACKWARD")) {
-            executeMovement(duration, -magnitude, 0, 0, sanitized, streamBus);
-        } else if (upper.startsWith("STRAFE_LEFT")) {
-            executeMovement(duration, 0, -magnitude, 0, sanitized, streamBus);
-        } else if (upper.startsWith("STRAFE_RIGHT")) {
-            executeMovement(duration, 0, magnitude, 0, sanitized, streamBus);
-        } else if (upper.startsWith("TURN_LEFT")) {
-            executeMovement(duration, 0, 0, -magnitude, sanitized, streamBus);
-        } else if (upper.startsWith("TURN_RIGHT")) {
-            executeMovement(duration, 0, 0, magnitude, sanitized, streamBus);
             executeMovement(duration, magnitude, 0, 0, command);
         } else if (upper.startsWith("DRIVE_BACKWARD")) {
             executeMovement(duration, -magnitude, 0, 0, command);
@@ -159,7 +135,6 @@ public class JulesDevController extends LinearOpMode {
             telemetry.addData("Command", "STOP");
             telemetry.update();
         } else {
-            telemetry.addData("Unknown Command", sanitized);
             telemetry.addData("Unknown Command", command);
             telemetry.update();
         }
