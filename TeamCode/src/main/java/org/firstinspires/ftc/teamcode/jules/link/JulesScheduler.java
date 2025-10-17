@@ -41,7 +41,7 @@ public class JulesScheduler implements JulesWsClient.ConnectionListener, AutoClo
             t.setDaemon(true);
             return t;
         });
-        this.wsClient.setConnectionListener(this);
+        this.wsClient.addConnectionListener(this);
     }
 
     public void start() {

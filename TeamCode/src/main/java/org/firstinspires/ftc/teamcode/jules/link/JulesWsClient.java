@@ -10,6 +10,7 @@ import com.qualcomm.robotcore.util.RobotLog;
 
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -44,7 +45,7 @@ public class JulesWsClient {
     private final AtomicBoolean open = new AtomicBoolean(false);
     private final AtomicBoolean running = new AtomicBoolean(false);
     private int reconnectAttempts = 0;
-    private ConnectionListener listener;
+    private final CopyOnWriteArrayList<ConnectionListener> listeners = new CopyOnWriteArrayList<>();
 
     public JulesWsClient(String url) {
         this.url = url;
@@ -59,7 +60,22 @@ public class JulesWsClient {
     }
 
     public void setConnectionListener(ConnectionListener listener) {
-        this.listener = listener;
+        listeners.clear();
+        if (listener != null) {
+            listeners.add(listener);
+        }
+    }
+
+    public void addConnectionListener(ConnectionListener listener) {
+        if (listener != null) {
+            listeners.addIfAbsent(listener);
+        }
+    }
+
+    public void removeConnectionListener(ConnectionListener listener) {
+        if (listener != null) {
+            listeners.remove(listener);
+        }
     }
 
     public void connect() {
@@ -72,11 +88,19 @@ public class JulesWsClient {
         running.set(false);
         try {
             if (socket != null) {
-                socket.close(1000, "closing");
+                socket.close(1000, "bye");
             }
         } catch (Exception ignored) {
         }
+        socket = null;
+        open.set(false);
         executor.shutdownNow();
+        try {
+            client.dispatcher().cancelAll();
+            client.dispatcher().executorService().shutdown();
+            client.connectionPool().evictAll();
+        } catch (Exception ignored) {
+        }
     }
 
     public boolean isOpen() {
@@ -119,6 +143,9 @@ public class JulesWsClient {
     }
 
     private void scheduleConnect(long delayMs) {
+        if (executor.isShutdown()) {
+            return;
+        }
         executor.schedule(this::doConnect, delayMs, TimeUnit.MILLISECONDS);
     }
 
@@ -133,8 +160,12 @@ public class JulesWsClient {
                 open.set(true);
                 reconnectAttempts = 0;
                 flushIfOpen();
-                if (listener != null) {
-                    listener.onOpen();
+                for (ConnectionListener l : listeners) {
+                    try {
+                        l.onOpen();
+                    } catch (Exception e) {
+                        RobotLog.ee(TAG, e, "ConnectionListener.onOpen failure");
+                    }
                 }
             }
 
@@ -146,8 +177,12 @@ public class JulesWsClient {
             @Override
             public void onClosed(WebSocket webSocket, int code, String reason) {
                 open.set(false);
-                if (listener != null) {
-                    listener.onClosed();
+                for (ConnectionListener l : listeners) {
+                    try {
+                        l.onClosed();
+                    } catch (Exception e) {
+                        RobotLog.ee(TAG, e, "ConnectionListener.onClosed failure");
+                    }
                 }
                 scheduleReconnect();
             }
@@ -156,8 +191,12 @@ public class JulesWsClient {
             public void onFailure(WebSocket webSocket, Throwable t, Response response) {
                 open.set(false);
                 RobotLog.ee(TAG, t, "WebSocket failure: %s", t.getMessage());
-                if (listener != null) {
-                    listener.onClosed();
+                for (ConnectionListener l : listeners) {
+                    try {
+                        l.onClosed();
+                    } catch (Exception e) {
+                        RobotLog.ee(TAG, e, "ConnectionListener.onClosed failure");
+                    }
                 }
                 scheduleReconnect();
             }
