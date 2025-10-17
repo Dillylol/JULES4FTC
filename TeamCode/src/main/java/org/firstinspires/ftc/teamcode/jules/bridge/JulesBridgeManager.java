@@ -1,18 +1,22 @@
 package org.firstinspires.ftc.teamcode.jules.bridge;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 
 import com.bylazar.telemetry.TelemetryManager;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.jules.JulesBuilder;
 import org.firstinspires.ftc.teamcode.jules.JulesRamTx;
-import org.firstinspires.ftc.teamcode.jules.opmode.JulesBridgeSwitch;
 import java.io.IOException;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -62,6 +66,8 @@ public final class JulesBridgeManager {
     private static final int PORT = 58080;
     private static final int DEFAULT_BUFFER_CAPACITY = 8192;
     private static final long HEARTBEAT_PERIOD_MS = 5_000L;
+    private static final String PREFS_NAME = "jules_prefs";
+    private static final String PREF_AUTO_ENABLED = "jules_auto_enabled";
 
     private final Object lock = new Object();
 
@@ -73,6 +79,7 @@ public final class JulesBridgeManager {
     private ScheduledExecutorService heartbeatExecutor;
 
     private boolean running;
+    private boolean starting;
     private long startTimestampMs;
     private int failureCount;
     private String lastIp;
@@ -92,14 +99,27 @@ public final class JulesBridgeManager {
         if (context == null) {
             return;
         }
+
+        Context applicationContext = context.getApplicationContext();
+        boolean autoStart;
+        String ip;
+        String token;
+
         synchronized (lock) {
-            this.appContext = context.getApplicationContext();
-            if (lastToken == null) {
+            this.appContext = applicationContext;
+            if (lastToken == null || lastToken.isEmpty()) {
                 lastToken = JulesTokenStore.getOrCreate(this.appContext);
             }
-            if (lastIp == null) {
+            if (lastIp == null || lastIp.isEmpty()) {
                 lastIp = defaultIp();
             }
+            autoStart = isAutoEnabledLocked();
+            ip = lastIp;
+            token = lastToken;
+        }
+
+        if (autoStart) {
+            start(ip, token);
         }
     }
 
@@ -125,79 +145,76 @@ public final class JulesBridgeManager {
 
     /** Start the HTTP bridge if it is currently stopped. */
     public boolean start(String ipOverride, String tokenOverride) {
+        Callable<Boolean> task;
         synchronized (lock) {
-            if (running) {
+            if (running || starting) {
                 return true;
             }
 
-            String token = (tokenOverride != null && !tokenOverride.isEmpty())
-                    ? tokenOverride
-                    : ensureToken(null);
-            String ip = (ipOverride != null && !ipOverride.isEmpty())
+            starting = true;
+
+            final String ip = (ipOverride != null && !ipOverride.isEmpty())
                     ? ipOverride
                     : defaultIp();
+            final String token = (tokenOverride != null && !tokenOverride.isEmpty())
+                    ? tokenOverride
+                    : ensureToken(null);
 
-            buffer = new JulesBuffer(DEFAULT_BUFFER_CAPACITY);
-            streamBus = new JulesStreamBus();
-            adapter = new JulesBufferJsonAdapter(buffer);
+            lastIp = ip;
+            lastToken = token;
 
-            try {
-                httpBridge = new JulesHttpBridge(PORT, adapter, adapter, token, streamBus);
-                running = true;
-                startTimestampMs = System.currentTimeMillis();
-                lastToken = token;
-                lastIp = ip;
-                lastAdvertise = httpBridge.advertiseLine();
-                lastError = null;
-                startHeartbeatLocked();
-                streamBus.publishJsonLine(String.format(Locale.US,
-                        "{\"event\":\"bridge_started\",\"ip\":\"%s\",\"port\":%d}", ip, PORT));
-                return true;
-            } catch (IOException e) {
+            task = () -> doStart(ip, token);
+        }
+
+        ExecutorService executor = Executors.newSingleThreadExecutor(nonDaemonFactory("JULES-Start"));
+        try {
+            Future<Boolean> future = executor.submit(task);
+            return future.get();
+        } catch (Exception e) {
+            String message = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
+            synchronized (lock) {
+                starting = false;
                 failureCount++;
-                lastError = e.getMessage();
-                stopLocked();
-                return false;
+                lastError = message;
+                lastAdvertise = offlineAdvert();
             }
+            return false;
+        } finally {
+            executor.shutdown();
         }
     }
 
     /** Stop the bridge and release resources. */
     public void stop() {
+        Callable<Boolean> task;
         synchronized (lock) {
-            stopLocked();
+            if (!running && !starting && httpBridge == null && streamBus == null) {
+                lastAdvertise = offlineAdvert();
+                return;
+            }
+            task = () -> {
+                doStop();
+                return true;
+            };
         }
-    }
 
-    private void stopLocked() {
-        running = false;
-        stopHeartbeatLocked();
-        if (httpBridge != null) {
-            try {
-                httpBridge.close();
-            } catch (Exception ignored) {
+        ExecutorService executor = Executors.newSingleThreadExecutor(nonDaemonFactory("JULES-Stop"));
+        try {
+            Future<Boolean> future = executor.submit(task);
+            future.get();
+        } catch (Exception e) {
+            String message = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
+            synchronized (lock) {
+                lastError = message;
             }
+        } finally {
+            executor.shutdown();
         }
-        if (streamBus != null) {
-            try {
-                streamBus.close();
-            } catch (Exception ignored) {
-            }
-        }
-        httpBridge = null;
-        streamBus = null;
-        adapter = null;
-        buffer = null;
-        lastAdvertise = offlineAdvert();
     }
 
     private void startHeartbeatLocked() {
         stopHeartbeatLocked();
-        heartbeatExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "JULES-Heartbeat");
-            t.setDaemon(true);
-            return t;
-        });
+        heartbeatExecutor = Executors.newSingleThreadScheduledExecutor(nonDaemonFactory("JULES-Heartbeat"));
         heartbeatExecutor.scheduleAtFixedRate(() -> {
             JulesStreamBus bus;
             long uptime;
@@ -298,6 +315,10 @@ public final class JulesBridgeManager {
         return PORT;
     }
 
+    public int port() {
+        return PORT;
+    }
+
     public String defaultIp() {
         List<String> ips = JulesHttpBridge.getLocalIPv4();
         return ips.isEmpty() ? "0.0.0.0" : ips.get(0);
@@ -334,5 +355,105 @@ public final class JulesBridgeManager {
         java.util.UUID uuid = java.util.UUID.randomUUID();
         return Long.toString(uuid.getMostSignificantBits() & Long.MAX_VALUE, 36)
                 + Long.toString(uuid.getLeastSignificantBits() & Long.MAX_VALUE, 36);
+    }
+
+    private boolean doStart(String ip, String token) {
+        JulesBuffer newBuffer = new JulesBuffer(DEFAULT_BUFFER_CAPACITY);
+        JulesStreamBus newStreamBus = new JulesStreamBus();
+        JulesBufferJsonAdapter newAdapter = new JulesBufferJsonAdapter(newBuffer);
+        JulesHttpBridge newBridge;
+
+        try {
+            newBridge = new JulesHttpBridge(PORT, newAdapter, newAdapter, token, newStreamBus);
+        } catch (IOException e) {
+            safeClose(newStreamBus);
+            synchronized (lock) {
+                starting = false;
+                running = false;
+                failureCount++;
+                lastError = e.getMessage();
+                lastAdvertise = offlineAdvert();
+            }
+            return false;
+        }
+
+        synchronized (lock) {
+            buffer = newBuffer;
+            streamBus = newStreamBus;
+            adapter = newAdapter;
+            httpBridge = newBridge;
+            running = true;
+            starting = false;
+            startTimestampMs = System.currentTimeMillis();
+            lastToken = token;
+            lastIp = ip;
+            lastAdvertise = httpBridge.advertiseLine();
+            lastError = null;
+            stopHeartbeatLocked();
+            startHeartbeatLocked();
+        }
+
+        newStreamBus.publishJsonLine(String.format(Locale.US,
+                "{\"event\":\"bridge_started\",\"ip\":\"%s\",\"port\":%d}", ip, PORT));
+        return true;
+    }
+
+    private void doStop() {
+        JulesHttpBridge bridgeToClose;
+        JulesStreamBus busToClose;
+        synchronized (lock) {
+            running = false;
+            starting = false;
+            stopHeartbeatLocked();
+            bridgeToClose = httpBridge;
+            busToClose = streamBus;
+            httpBridge = null;
+            streamBus = null;
+            adapter = null;
+            buffer = null;
+            lastAdvertise = offlineAdvert();
+        }
+
+        safeClose(bridgeToClose);
+        safeClose(busToClose);
+    }
+
+    private void safeClose(AutoCloseable closeable) {
+        if (closeable == null) {
+            return;
+        }
+        try {
+            closeable.close();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private ThreadFactory nonDaemonFactory(final String name) {
+        return r -> {
+            Thread t = new Thread(r, name);
+            t.setDaemon(false);
+            return t;
+        };
+    }
+
+    private boolean isAutoEnabledLocked() {
+        Context ctx = appContext;
+        if (ctx == null) {
+            return false;
+        }
+        SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        return prefs.getBoolean(PREF_AUTO_ENABLED, false);
+    }
+
+    public void setAutoEnabled(boolean enabled) {
+        Context ctx;
+        synchronized (lock) {
+            ctx = appContext;
+        }
+        if (ctx == null) {
+            return;
+        }
+        SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putBoolean(PREF_AUTO_ENABLED, enabled).apply();
     }
 }

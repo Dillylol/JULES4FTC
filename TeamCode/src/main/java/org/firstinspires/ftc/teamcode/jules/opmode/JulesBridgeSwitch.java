@@ -1,5 +1,7 @@
 package org.firstinspires.ftc.teamcode.jules.opmode;
 
+import android.content.Context;
+
 import com.bylazar.telemetry.PanelsTelemetry;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
@@ -14,7 +16,7 @@ import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
  * Panels will display the **full (unmasked) token** for fast pairing.
  * Driver Station will continue to display the masked token.
  */
-@TeleOp(name = "JULES: Bridge Switch", group = "Jules")
+@TeleOp(name = "JULES: Enable & Status", group = "Jules")
 public class JulesBridgeSwitch extends OpMode {
 
     private JulesBridgeManager manager;
@@ -27,94 +29,56 @@ public class JulesBridgeSwitch extends OpMode {
     @Override
     public void init() {
         manager = JulesBridgeManager.getInstance();
-        manager.prepare(hardwareMap.appContext);
+        Context appContext = hardwareMap.appContext;
+        manager.prepare(appContext);
         preparedIp = manager.defaultIp();
-        preparedToken = manager.ensureToken(hardwareMap.appContext);
+        preparedToken = manager.ensureToken(appContext);
 
-        // Hook Panels telemetry using the same API as your BotelloDATA program
         panelsTl = PanelsTelemetry.INSTANCE.getFtcTelemetry();
 
-        // DS shows masked; Panels shows unmasked
-        telemetry.addLine("Press START to enable JULES");
+        telemetry.addLine("Press START to enable the persistent JULES bridge.");
         telemetry.addData("IP", preparedIp);
         telemetry.addData("Token", JulesBridgeManager.maskToken(preparedToken));
         telemetry.update();
 
-        panelsTl.addLine("Press START to enable JULES");
-        panelsTl.addData("IP", preparedIp);
-        panelsTl.addData("Token", preparedToken); // UNMASKED on Panels
-        panelsTl.update();
+        if (panelsTl != null) {
+            panelsTl.addLine("Press START to enable the persistent JULES bridge.");
+            panelsTl.addData("IP", preparedIp);
+            panelsTl.addData("Token", preparedToken);
+            panelsTl.update();
+        }
     }
 
     @Override
     public void start() {
         manager.start(preparedIp, preparedToken);
-        addLine("Starting JULES bridge…");
-        update();
+        manager.setAutoEnabled(true);
+
+        telemetry.addLine("Bridge enable requested. Leave this OpMode; bridge remains ON.");
+        telemetry.update();
+
+        if (panelsTl != null) {
+            panelsTl.addLine("Bridge enable requested. Leave this OpMode; bridge remains ON.");
+            panelsTl.update();
+        }
     }
 
     @Override
     public void loop() {
         JulesBridgeManager.Status status = manager.getStatusSnapshot();
 
-        if (status == null) {
-            addData("Status", "STOPPED");
-            addLine("Press START to enable JULES");
-            update();
-            return;
-        }
-
-        // Driver Station (masked)
-        telemetry.addData("Status", status.running ? "RUNNING" : "STOPPED");
-        telemetry.addData("IP", nullSafe(status.ip));
-        telemetry.addData("Port", status.port);
-        telemetry.addData("Token", JulesBridgeManager.maskToken(status.token));
-        telemetry.addData("Uptime", formatDuration(status.uptimeMs));
-        telemetry.addData("Retries", status.retryCount);
-        if (status.lastError != null && !status.lastError.isEmpty()) {
-            telemetry.addData("Last error", status.lastError);
-        }
-        telemetry.addLine(nullSafe(status.advertiseLine));
-        telemetry.update();
-
-        // Panels (UNMASKED)
-        if (panelsTl != null) {
-            panelsTl.addData("Status", status.running ? "RUNNING" : "STOPPED");
-            panelsTl.addData("IP", nullSafe(status.ip));
-            panelsTl.addData("Port", status.port);
-            panelsTl.addData("Token", nullSafe(status.token)); // full token
-            panelsTl.addData("Uptime", formatDuration(status.uptimeMs));
-            panelsTl.addData("Retries", status.retryCount);
-            if (status.lastError != null && !status.lastError.isEmpty()) {
-                panelsTl.addData("Last error", status.lastError);
-            }
-            panelsTl.addLine(nullSafe(status.advertiseLine));
-            if (!status.running) panelsTl.addLine("Press START to enable JULES");
-            panelsTl.update();
-        }
+        renderTelemetry(status);
     }
 
     @Override
     public void stop() {
-        manager.stop();
-        addLine("JULES bridge stopped");
-        update();
-    }
-
-    // -------- Telemetry helpers: add to BOTH where appropriate --------
-    private void addData(String caption, Object value) {
-        telemetry.addData(caption, value);
-        if (panelsTl != null) panelsTl.addData(caption, value);
-    }
-
-    private void addLine(String line) {
-        telemetry.addLine(line);
-        if (panelsTl != null) panelsTl.addLine(line);
-    }
-
-    private void update() {
+        telemetry.addLine("Leave this OpMode; bridge remains ON.");
         telemetry.update();
-        if (panelsTl != null) panelsTl.update();
+
+        if (panelsTl != null) {
+            panelsTl.addLine("Leave this OpMode; bridge remains ON.");
+            panelsTl.update();
+        }
     }
 
     private static String nullSafe(String s) { return s == null ? "-" : s; }
@@ -127,5 +91,45 @@ public class JulesBridgeSwitch extends OpMode {
         if (hours > 0) return String.format("%dh %02dm %02ds", hours, minutes, seconds);
         if (minutes > 0) return String.format("%dm %02ds", minutes, seconds);
         return String.format("%ds", seconds);
+    }
+
+    private void renderTelemetry(JulesBridgeManager.Status status) {
+        String state = (status != null && status.running) ? "RUNNING" : "STOPPED";
+        long uptime = (status != null) ? status.uptimeMs : 0L;
+        String ip = (status != null) ? status.ip : manager.defaultIp();
+        int port = (status != null) ? status.port : manager.port();
+        String tokenMasked = (status != null) ? JulesBridgeManager.maskToken(status.token) : JulesBridgeManager.maskToken(preparedToken);
+        String tokenFull = (status != null && status.token != null) ? status.token : preparedToken;
+        int retries = (status != null) ? status.retryCount : 0;
+        String lastError = (status != null) ? status.lastError : null;
+        String advertise = (status != null) ? nullSafe(status.advertiseLine) : nullSafe(manager.getAdvertiseLine());
+
+        telemetry.addData("Status", state);
+        telemetry.addData("IP", nullSafe(ip));
+        telemetry.addData("Port", port);
+        telemetry.addData("Token", tokenMasked);
+        telemetry.addData("Uptime", formatDuration(uptime));
+        telemetry.addData("Retries", retries);
+        if (lastError != null && !lastError.isEmpty()) {
+            telemetry.addData("Last error", lastError);
+        }
+        telemetry.addLine(advertise);
+        telemetry.addLine("Leave this OpMode; bridge remains ON.");
+        telemetry.update();
+
+        if (panelsTl != null) {
+            panelsTl.addData("Status", state);
+            panelsTl.addData("IP", nullSafe(ip));
+            panelsTl.addData("Port", port);
+            panelsTl.addData("Token", nullSafe(tokenFull));
+            panelsTl.addData("Uptime", formatDuration(uptime));
+            panelsTl.addData("Retries", retries);
+            if (lastError != null && !lastError.isEmpty()) {
+                panelsTl.addData("Last error", lastError);
+            }
+            panelsTl.addLine(advertise);
+            panelsTl.addLine("Leave this OpMode; bridge remains ON.");
+            panelsTl.update();
+        }
     }
 }
