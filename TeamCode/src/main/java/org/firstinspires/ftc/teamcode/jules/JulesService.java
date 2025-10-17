@@ -11,8 +11,7 @@ import org.firstinspires.ftc.teamcode.jules.bridge.JulesHttpBridge;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesStreamBus;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesTokenStore;
 
-import org.firstinspires.ftc.robotcore.external.Telemetry;
-import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
+import java.io.IOException;
 
 /**
  * Backwards-compatible facade that delegates to {@link JulesBridgeManager}.

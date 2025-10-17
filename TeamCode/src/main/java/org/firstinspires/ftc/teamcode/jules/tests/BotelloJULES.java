@@ -23,7 +23,6 @@ public class BotelloJULES extends OpMode {
 
     // This will hold the JulesBuilder instance for this OpMode
     private JulesBuilder jules;
-    private JulesBridgeManager bridgeManager;
 
     @Override
     public void init() {
