@@ -7,10 +7,14 @@ public class JulesCommand {
 
     /**
      * Sets the next command to be executed. This is called by the HTTP bridge.
-     * @param command The full command string (e.g., "DRIVE_FORWARD_2T_0.5V").
+     * @param command The full command string (e.g., "DRIVE_FORWARD_2T_0.5P").
      */
     public static synchronized void setCommand(String command) {
-        currentCommand = command;
+        if (command == null) {
+            currentCommand = null;
+        } else {
+            currentCommand = command.trim();
+        }
     }
 
     /**

@@ -2,6 +2,9 @@ package org.firstinspires.ftc.teamcode.jules;
 
 import android.content.Context;
 
+import com.bylazar.telemetry.TelemetryManager;
+
+import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesBuffer;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesBufferJsonAdapter;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesHttpBridge;
@@ -11,73 +14,115 @@ import org.firstinspires.ftc.teamcode.jules.bridge.JulesTokenStore;
 import java.io.IOException;
 
 /**
- * Manages the lifecycle of the Jules data bridge, ensuring it starts
- * once when the app launches and stops when the app closes.
- * This provides a persistent connection.
+ * Central lifecycle manager for the persistent JULES data bridge.
+ *
+ * The service spins up the HTTP bridge once when the Robot Controller boots, keeps
+ * the shared buffer/stream bus alive across OpModes, and exposes helper factory
+ * methods so each OpMode can obtain a {@link JulesBuilder} wired into the
+ * persistent transport layer.
  */
-public class JulesService {
+public final class JulesService {
 
-    private static JulesBuilder julesBuilderInstance = null;
-    private static JulesHttpBridge httpBridge = null;
-    private static boolean isInitialized = false;
+    private static final int DEFAULT_BUFFER_CAPACITY = 8192;
+    private static JulesBuffer buffer;
+    private static JulesStreamBus streamBus;
+    private static JulesBufferJsonAdapter adapter;
+    private static JulesHttpBridge httpBridge;
+    private static boolean bridgeOnline = false;
+
+    private JulesService() {}
 
     /**
-     * Initializes the Jules service. This should be called once by the JulesHooks class.
-     *
-     * @param context The application context.
+     * Initializes the JULES bridge if it has not already been started.
      */
     public static synchronized void init(Context context) {
-        if (isInitialized) {
+        if (bridgeOnline) {
             return;
         }
 
-        // 1. Create the core components for the JULES system.
-        JulesBuffer buffer = new JulesBuffer(8192); // A buffer to hold recent data.
-        JulesStreamBus streamBus = new JulesStreamBus(); // For live data streaming.
-        JulesBufferJsonAdapter adapter = new JulesBufferJsonAdapter(buffer); // Connects the buffer to the HTTP bridge.
-        String token = JulesTokenStore.getOrCreate(context); // Get or create a security token.
+        buffer = new JulesBuffer(DEFAULT_BUFFER_CAPACITY);
+        streamBus = new JulesStreamBus();
+        adapter = new JulesBufferJsonAdapter(buffer);
+        String token = JulesTokenStore.getOrCreate(context);
 
         try {
-            // 2. Start the HTTP Server on port 58080.
             httpBridge = new JulesHttpBridge(58080, adapter, adapter, token, streamBus);
+            bridgeOnline = true;
         } catch (IOException e) {
-            // If the server fails to start, we can't proceed.
-            // This error will be visible in the robot controller logs.
             e.printStackTrace();
-            return;
+            shutdownInternals();
         }
-
-        // 3. Create the transmitter that sends data to our buffer.
-        // We pass null for TelemetryManager and dsTelemetry because this service runs outside of an OpMode.
-        JulesRamTx transmitter = new JulesRamTx(buffer.capacity(), null, null, "jules");
-
-        // 4. Create the single, globally accessible instance of the JulesBuilder.
-        julesBuilderInstance = new JulesBuilder(transmitter);
-
-        isInitialized = true;
     }
 
     /**
-     * Provides global access to the single JulesBuilder instance.
-     *
-     * @return The singleton JulesBuilder object.
+     * Creates a {@link JulesBuilder} bound to the persistent data bridge.
+     * If the bridge failed to start, the builder still returns but will be
+     * backed by an isolated RAM buffer.
      */
-    public static JulesBuilder getJules() {
-        if (!isInitialized) {
-            // This is a safeguard. If initialization failed, this prevents crashes.
-            return new JulesBuilder(null);
-        }
-        return julesBuilderInstance;
+    public static synchronized JulesBuilder newBuilder(TelemetryManager panelsTelemetry,
+                                                       Telemetry dsTelemetry,
+                                                       String topicPrefix) {
+        JulesRamTx tx = newTransmitter(panelsTelemetry, dsTelemetry, topicPrefix);
+        return new JulesBuilder(tx);
     }
 
     /**
-     * Shuts down the Jules service. This is handled automatically.
+     * Creates a transmitter that feeds either the shared buffer/stream bus or a
+     * standalone buffer if the service is offline.
      */
-    public static void stop() {
+    public static synchronized JulesRamTx newTransmitter(TelemetryManager panelsTelemetry,
+                                                          Telemetry dsTelemetry,
+                                                          String topicPrefix) {
+        if (buffer != null) {
+            return new JulesRamTx(buffer, streamBus, panelsTelemetry, dsTelemetry, topicPrefix);
+        }
+        return new JulesRamTx(DEFAULT_BUFFER_CAPACITY, panelsTelemetry, dsTelemetry, topicPrefix);
+    }
+
+    /**
+     * Adds the HTTP bridge advertisement line (IP + token) to DS telemetry.
+     */
+    public static void advertise(Telemetry telemetry) {
+        if (telemetry == null) return;
+        telemetry.addLine(advertiseLine());
+    }
+
+    /**
+     * Returns a short human-readable advertisement string for telemetry.
+     */
+    public static synchronized String advertiseLine() {
+        if (httpBridge != null) {
+            return httpBridge.advertiseLine();
+        }
+        return "JULES HTTP bridge offline";
+    }
+
+    /**
+     * @return {@code true} when the persistent HTTP bridge started successfully.
+     */
+    public static synchronized boolean isBridgeOnline() {
+        return bridgeOnline && httpBridge != null;
+    }
+
+    public static synchronized String token() {
+        return (httpBridge != null) ? httpBridge.getToken() : null;
+    }
+
+    public static synchronized void stop() {
+        shutdownInternals();
+    }
+
+    private static void shutdownInternals() {
+        bridgeOnline = false;
         if (httpBridge != null) {
             httpBridge.close();
         }
-        isInitialized = false;
-        julesBuilderInstance = null;
+        if (streamBus != null) {
+            streamBus.close();
+        }
+        httpBridge = null;
+        streamBus = null;
+        buffer = null;
+        adapter = null;
     }
 }

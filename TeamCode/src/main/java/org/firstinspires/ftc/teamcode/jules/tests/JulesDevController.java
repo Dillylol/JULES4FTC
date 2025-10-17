@@ -7,7 +7,6 @@ import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
-import org.firstinspires.ftc.teamcode.jules.JulesService;
 import org.firstinspires.ftc.teamcode.jules.Metrics;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesBuffer;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesBufferJsonAdapter;
@@ -23,6 +22,7 @@ import org.firstinspires.ftc.teamcode.jules.JulesTap;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -33,6 +33,15 @@ public class JulesDevController extends LinearOpMode {
     // TODO: Tune these values for your specific robot
     private static final double WHEEL_DIAMETER_INCHES = 3.78; // For standard 96mm goBILDA mecanum wheels
     private static final double GEAR_RATIO = 1.0;            // Assuming no external gearing on the drivetrain
+    private static final List<String> COMMAND_REFERENCE = Arrays.asList(
+            "DRIVE_FORWARD_<seconds>T_<power>P",
+            "DRIVE_BACKWARD_<seconds>T_<power>P",
+            "STRAFE_LEFT_<seconds>T_<power>P",
+            "STRAFE_RIGHT_<seconds>T_<power>P",
+            "TURN_LEFT_<seconds>T_<power>P",
+            "TURN_RIGHT_<seconds>T_<power>P",
+            "STOP"
+    );
 
     // JULES Components
     private JulesHttpBridge http;
@@ -55,6 +64,10 @@ public class JulesDevController extends LinearOpMode {
             telemetry.addLine(http.advertiseLine());
         }
         telemetry.addLine("\nReady to receive client commands.");
+        telemetry.addLine("Supported commands:");
+        for (String cmd : COMMAND_REFERENCE) {
+            telemetry.addLine(" • " + cmd);
+        }
         telemetry.update();
 
         waitForStart();
@@ -91,25 +104,44 @@ public class JulesDevController extends LinearOpMode {
 
     /**
      * Parses the command string and calls the appropriate robot action.
-     * @param command The command string from the client (e.g., "DRIVE_FORWARD_1.5T_0.5V")
+     * @param command The command string from the client (e.g., "DRIVE_FORWARD_1.5T_0.5P")
      */
-    private void parseAndExecute(String command) {
-        // Default values for movement
-        double duration = parseValue(command, "T", 1.0); // Default to 1 second
-        double power = parseValue(command, "V", 0.4);    // Default to 0.4 power
+    private void parseAndExecute(String commandRaw) {
+        if (commandRaw == null) {
+            return;
+        }
 
-        if (command.startsWith("DRIVE_FORWARD")) {
-            executeMovement(duration, power, 0, 0, command);
-        } else if (command.startsWith("DRIVE_BACKWARD")) {
-            executeMovement(duration, -power, 0, 0, command);
-        } else if (command.startsWith("STRAFE_LEFT")) {
-            executeMovement(duration, 0, -power, 0, command);
-        } else if (command.startsWith("STRAFE_RIGHT")) {
-            executeMovement(duration, 0, power, 0, command);
-        } else if (command.startsWith("TURN_LEFT")) {
-            executeMovement(duration, 0, 0, -power, command);
-        } else if (command.startsWith("TURN_RIGHT")) {
-            executeMovement(duration, 0, 0, power, command);
+        String command = commandRaw.trim();
+        if (command.isEmpty()) {
+            return;
+        }
+
+        String upper = command.toUpperCase(Locale.US);
+
+        double duration = Math.max(0, parseValue(upper, "T", 1.0));
+        double power = clampPower(parseValue(upper, "P", 0.5));
+
+        double magnitude = Math.abs(power);
+
+        if (upper.startsWith("DRIVE_FORWARD")) {
+            executeMovement(duration, magnitude, 0, 0, command);
+        } else if (upper.startsWith("DRIVE_BACKWARD")) {
+            executeMovement(duration, -magnitude, 0, 0, command);
+        } else if (upper.startsWith("STRAFE_LEFT")) {
+            executeMovement(duration, 0, -magnitude, 0, command);
+        } else if (upper.startsWith("STRAFE_RIGHT")) {
+            executeMovement(duration, 0, magnitude, 0, command);
+        } else if (upper.startsWith("TURN_LEFT")) {
+            executeMovement(duration, 0, 0, -magnitude, command);
+        } else if (upper.startsWith("TURN_RIGHT")) {
+            executeMovement(duration, 0, 0, magnitude, command);
+        } else if (upper.startsWith("STOP")) {
+            follower.setTeleOpDrive(0, 0, 0, true);
+            telemetry.addData("Command", "STOP");
+            telemetry.update();
+        } else {
+            telemetry.addData("Unknown Command", command);
+            telemetry.update();
         }
     }
 
@@ -156,7 +188,7 @@ public class JulesDevController extends LinearOpMode {
      * A helper to parse numeric values from a command string.
      */
     private double parseValue(String command, String id, double defaultValue) {
-        Pattern p = Pattern.compile("(\\d*\\.?\\d+)" + id);
+        Pattern p = Pattern.compile("([-+]?\\d*\\.?\\d+)" + id);
         Matcher m = p.matcher(command);
         if (m.find()) {
             try {
@@ -166,6 +198,13 @@ public class JulesDevController extends LinearOpMode {
             }
         }
         return defaultValue;
+    }
+
+    private double clampPower(double power) {
+        if (Double.isNaN(power)) {
+            return 0;
+        }
+        return Math.max(-1.0, Math.min(1.0, power));
     }
 
     // --- Helper methods for initialization ---

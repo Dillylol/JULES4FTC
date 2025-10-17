@@ -11,7 +11,7 @@ import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.teamcode.jules.JulesBuilder;
-import org.firstinspires.ftc.teamcode.jules.JulesRamTx;
+import org.firstinspires.ftc.teamcode.jules.JulesService;
 
 @TeleOp(name = "BotelloJULES")
 public class BotelloJULES extends OpMode {
@@ -44,18 +44,13 @@ public class BotelloJULES extends OpMode {
                 RevHubOrientationOnRobot.UsbFacingDirection.UP)));
 
         // --- JULES INITIALIZATION ---
-        // Create a transmitter that's aware of the OpMode's telemetry contexts.
-        JulesRamTx transmitter = new JulesRamTx(
-                8192, // Buffer capacity
-                PanelsTelemetry.INSTANCE.getTelemetry(), // Panels telemetry manager
-                telemetry, // Driver Station telemetry
-                "jules" // Topic prefix for Panels
+        jules = JulesService.newBuilder(
+                PanelsTelemetry.INSTANCE.getTelemetry(),
+                telemetry,
+                "jules/botello"
         );
-        // Create a builder that uses our new transmitter.
-        jules = new JulesBuilder(transmitter);
 
-
-        telemetry.addData("Jules", "Local builder is ready.");
+        telemetry.addData("Jules", JulesService.advertiseLine());
         telemetry.update();
     }
 
@@ -94,6 +89,7 @@ public class BotelloJULES extends OpMode {
         }
 
         telemetry.addData("Heading", "%.2f deg", Math.toDegrees(botHeading));
+        JulesService.advertise(telemetry);
         telemetry.update();
     }
 

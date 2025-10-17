@@ -14,6 +14,7 @@ import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
+import java.net.URLDecoder;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -23,9 +24,12 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.HashMap;
 import java.util.TimeZone;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * JULES HTTP Bridge (NanoHTTPD)
@@ -111,12 +115,16 @@ public class JulesHttpBridge extends NanoHTTPD implements AutoCloseable {
     @Override
     public Response serve(IHTTPSession session) {
         // Parse body so POST form params appear in session.getParms()
-        try { session.parseBody(new java.util.HashMap<>()); } catch (Exception ignored) {}
+        Map<String,String> body = new HashMap<>();
+        try { session.parseBody(body); } catch (Exception e) {
+            return json(BAD_REQUEST, "{\"ok\":false,\"error\":\"body parse\"}");
+        }
 
         final Method method = session.getMethod();
         final String uri = session.getUri();
         final Map<String,String> params = session.getParms();
         final Map<String,String> headers = session.getHeaders();
+        final String postData = body.get("postData");
 
         final boolean isHandshake = method == Method.GET && "/jules/handshake".equals(uri);
         if (!isHandshake && !authorized(params, headers)) {
@@ -164,12 +172,16 @@ public class JulesHttpBridge extends NanoHTTPD implements AutoCloseable {
                 if (method != Method.POST) {
                     return json(METHOD_NOT_ALLOWED, "{\"ok\":false,\"error\":\"method not allowed, use POST\"}");
                 }
-                String commandText = params.get("command");
+                String commandText = firstNonEmpty(params.get("command"), extractCommandFromBody(postData));
                 if (commandText == null || commandText.trim().isEmpty()) {
                     return json(BAD_REQUEST, "{\"ok\":false,\"error\":\"missing 'command' parameter\"}");
                 }
-                JulesCommand.setCommand(commandText); // Set the static command
-                return json(OK, "{\"ok\":true, \"command_sent\":\"" + escape(commandText) + "\"}");
+                String sanitized = commandText.trim();
+                JulesCommand.setCommand(sanitized);
+                if (streamBus != null) {
+                    streamBus.publishJsonLine("{\"command\":\"" + escape(sanitized) + "\"}");
+                }
+                return json(OK, "{\"ok\":true, \"command_sent\":\"" + escape(sanitized) + "\"}");
             }
 
             // Live stream (SSE)
@@ -276,5 +288,75 @@ public class JulesHttpBridge extends NanoHTTPD implements AutoCloseable {
         return new Dumper() {
             @Override public Iterator<String> dumpAll() { return allSupplier.get(); }
         };
+    }
+
+    private static final Pattern JSON_COMMAND_PATTERN = Pattern.compile("\\\"command\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
+
+    private static String extractCommandFromBody(String body) {
+        if (body == null) {
+            return null;
+        }
+
+        String trimmed = body.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+
+        Matcher matcher = JSON_COMMAND_PATTERN.matcher(trimmed);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+
+        String decoded = urlDecode(trimmed);
+        if (!decoded.equals(trimmed)) {
+            Matcher decodedMatcher = JSON_COMMAND_PATTERN.matcher(decoded);
+            if (decodedMatcher.find()) {
+                return decodedMatcher.group(1);
+            }
+        }
+
+        String fromKv = extractFromKeyValue(trimmed);
+        if (fromKv != null) {
+            return fromKv;
+        }
+
+        if (!decoded.equals(trimmed)) {
+            fromKv = extractFromKeyValue(decoded);
+            if (fromKv != null) {
+                return fromKv;
+            }
+        }
+
+        if (trimmed.startsWith("\"") && trimmed.endsWith("\"") && trimmed.length() > 1) {
+            return trimmed.substring(1, trimmed.length() - 1);
+        }
+        if (!decoded.equals(trimmed) && decoded.startsWith("\"") && decoded.endsWith("\"") && decoded.length() > 1) {
+            return decoded.substring(1, decoded.length() - 1);
+        }
+
+        return decoded.trim();
+    }
+
+    private static String extractFromKeyValue(String candidate) {
+        String[] tokens = candidate.split("&");
+        for (String token : tokens) {
+            int idx = token.indexOf('=');
+            if (idx <= 0) {
+                continue;
+            }
+            String key = token.substring(0, idx).trim();
+            if ("command".equalsIgnoreCase(key)) {
+                return urlDecode(token.substring(idx + 1).trim());
+            }
+        }
+        return null;
+    }
+
+    private static String urlDecode(String value) {
+        try {
+            return URLDecoder.decode(value, "UTF-8");
+        } catch (Exception ignored) {
+            return value;
+        }
     }
 }
