@@ -113,6 +113,18 @@ public class JulesDevController extends LinearOpMode {
         }
 
         String upper = sanitized.toUpperCase(Locale.US);
+     */
+    private void parseAndExecute(String commandRaw) {
+        if (commandRaw == null) {
+            return;
+        }
+
+        String command = commandRaw.trim();
+        if (command.isEmpty()) {
+            return;
+        }
+
+        String upper = command.toUpperCase(Locale.US);
 
         double duration = Math.max(0, parseValue(upper, "T", 1.0));
         double power = clampPower(parseValue(upper, "P", 0.5));
@@ -131,12 +143,24 @@ public class JulesDevController extends LinearOpMode {
             executeMovement(duration, 0, 0, -magnitude, sanitized, streamBus);
         } else if (upper.startsWith("TURN_RIGHT")) {
             executeMovement(duration, 0, 0, magnitude, sanitized, streamBus);
+            executeMovement(duration, magnitude, 0, 0, command);
+        } else if (upper.startsWith("DRIVE_BACKWARD")) {
+            executeMovement(duration, -magnitude, 0, 0, command);
+        } else if (upper.startsWith("STRAFE_LEFT")) {
+            executeMovement(duration, 0, -magnitude, 0, command);
+        } else if (upper.startsWith("STRAFE_RIGHT")) {
+            executeMovement(duration, 0, magnitude, 0, command);
+        } else if (upper.startsWith("TURN_LEFT")) {
+            executeMovement(duration, 0, 0, -magnitude, command);
+        } else if (upper.startsWith("TURN_RIGHT")) {
+            executeMovement(duration, 0, 0, magnitude, command);
         } else if (upper.startsWith("STOP")) {
             follower.setTeleOpDrive(0, 0, 0, true);
             telemetry.addData("Command", "STOP");
             telemetry.update();
         } else {
             telemetry.addData("Unknown Command", sanitized);
+            telemetry.addData("Unknown Command", command);
             telemetry.update();
         }
     }
