@@ -78,6 +78,24 @@ public final class JulesLinkManager {
     private Telemetry originalTelemetry;
     private JulesTelemetry telemetryProxy;
     private final List<Runnable> ownedConnectedCallbacks = new ArrayList<>();
+/**
+ * Entry point tying together discovery, scheduling, and transport layers.
+ */
+public class JulesLinkManager {
+
+    private static final String PREF_WS_URL = "JULES_WS_URL";
+    private static final String DEFAULT_WS_URL = "ws://192.168.49.1:8765/stream";
+
+    private final JulesDataOrganizer organizer = JulesDataOrganizer.getInstance();
+
+    private JulesTelemetry telemetryProxy;
+    private Telemetry telemetry;
+    private JulesWsClient wsClient;
+    private JulesUdpBeacon udpBeacon;
+    private JulesHttpServer httpServer;
+    private JulesScheduler scheduler;
+    private String wsUrl;
+    private OpMode opMode;
 
     public void init(OpMode opMode,
                      HardwareMap hardwareMap,
@@ -375,6 +393,53 @@ public final class JulesLinkManager {
         }
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(context);
         return preferences.getString(PREF_WS_URL, DEFAULT_WS_URL);
+        organizer.bind(opMode, hardwareMap, gamepad1, gamepad2, telemetry);
+        organizer.setOpModeState(JulesDataOrganizer.OpModeState.INIT);
+        telemetryProxy = new JulesTelemetry(telemetry, organizer);
+        this.telemetry = telemetryProxy.getFtcTelemetry();
+
+        Context context = hardwareMap.appContext;
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        wsUrl = prefs.getString(PREF_WS_URL, DEFAULT_WS_URL);
+
+        wsClient = new JulesWsClient(wsUrl);
+        try {
+            udpBeacon = new JulesUdpBeacon();
+        } catch (Exception ignored) {
+            udpBeacon = null;
+        }
+        httpServer = new JulesHttpServer(organizer);
+        scheduler = new JulesScheduler(organizer, wsClient, udpBeacon, httpServer);
+    }
+
+    public void start() {
+        organizer.setOpModeState(JulesDataOrganizer.OpModeState.RUNNING);
+        wsClient.connect();
+        scheduler.start();
+    }
+
+    public void loop() {
+        // no-op; placeholder for future enhancements
+    }
+
+    public void stop() {
+        organizer.setOpModeState(JulesDataOrganizer.OpModeState.STOPPED);
+        scheduler.stop();
+        wsClient.close();
+        if (udpBeacon != null) {
+            udpBeacon.close();
+        }
+        if (httpServer != null) {
+            httpServer.stopServer();
+        }
+    }
+
+    public Telemetry getTelemetry() {
+        return telemetry;
+    }
+
+    public String getWsUrl() {
+        return wsUrl;
     }
 }
 
