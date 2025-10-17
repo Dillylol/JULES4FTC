@@ -7,22 +7,18 @@ import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
-import org.firstinspires.ftc.teamcode.jules.JulesService;
 import org.firstinspires.ftc.teamcode.jules.Metrics;
-import org.firstinspires.ftc.teamcode.jules.bridge.JulesBuffer;
-import org.firstinspires.ftc.teamcode.jules.bridge.JulesBufferJsonAdapter;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesCommand;
-import org.firstinspires.ftc.teamcode.jules.bridge.JulesHttpBridge;
+import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesMetricsHttpAdapter;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesStreamBus;
-import org.firstinspires.ftc.teamcode.jules.bridge.JulesTokenStore;
 import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 import com.pedropathing.follower.Follower;
 import org.firstinspires.ftc.teamcode.jules.JulesTap;
 
-import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -33,10 +29,18 @@ public class JulesDevController extends LinearOpMode {
     // TODO: Tune these values for your specific robot
     private static final double WHEEL_DIAMETER_INCHES = 3.78; // For standard 96mm goBILDA mecanum wheels
     private static final double GEAR_RATIO = 1.0;            // Assuming no external gearing on the drivetrain
+    private static final List<String> COMMAND_REFERENCE = Arrays.asList(
+            "DRIVE_FORWARD_<seconds>T_<power>P",
+            "DRIVE_BACKWARD_<seconds>T_<power>P",
+            "STRAFE_LEFT_<seconds>T_<power>P",
+            "STRAFE_RIGHT_<seconds>T_<power>P",
+            "TURN_LEFT_<seconds>T_<power>P",
+            "TURN_RIGHT_<seconds>T_<power>P",
+            "STOP"
+    );
 
     // JULES Components
-    private JulesHttpBridge http;
-    private JulesStreamBus streamBus;
+    private JulesBridgeManager bridgeManager;
     private JulesTap tap;
 
     // Robot Hardware & Control
@@ -50,11 +54,15 @@ public class JulesDevController extends LinearOpMode {
         setupHardware();
         setupJules();
 
+        JulesBridgeManager.Status status = bridgeManager.getStatusSnapshot();
+
         telemetry.addLine("✅ JULES Dev Controller Initialized");
-        if (http != null) {
-            telemetry.addLine(http.advertiseLine());
-        }
+        telemetry.addLine(status.advertiseLine);
         telemetry.addLine("\nReady to receive client commands.");
+        telemetry.addLine("Supported commands:");
+        for (String cmd : COMMAND_REFERENCE) {
+            telemetry.addLine(" • " + cmd);
+        }
         telemetry.update();
 
         waitForStart();
@@ -66,6 +74,9 @@ public class JulesDevController extends LinearOpMode {
             // CRITICAL: follower.update() must be called every loop to update odometry
             follower.update();
 
+            // Refresh stream bus reference in case the bridge toggled.
+            JulesStreamBus streamBus = bridgeManager.getStreamBus();
+
             // Get the latest command from the client. This also clears it.
             String command = JulesCommand.getAndClearCommand();
 
@@ -73,7 +84,7 @@ public class JulesDevController extends LinearOpMode {
                 telemetry.addData("Received Command", command);
                 telemetry.update();
 
-                parseAndExecute(command); // Execute the command
+                parseAndExecute(command, streamBus); // Execute the command
 
                 // Ensure the robot is stopped after the command finishes
                 follower.setTeleOpDrive(0, 0, 0, true);
@@ -84,45 +95,64 @@ public class JulesDevController extends LinearOpMode {
 
             sleep(50); // Poll for commands at 20Hz
         }
-
-        // Cleanup
-        if (http != null) http.close();
     }
 
     /**
      * Parses the command string and calls the appropriate robot action.
-     * @param command The command string from the client (e.g., "DRIVE_FORWARD_1.5T_0.5V")
+     * @param command The command string from the client (e.g., "DRIVE_FORWARD_1.5T_0.5P")
      */
-    private void parseAndExecute(String command) {
-        // Default values for movement
-        double duration = parseValue(command, "T", 1.0); // Default to 1 second
-        double power = parseValue(command, "V", 0.4);    // Default to 0.4 power
+    private void parseAndExecute(String commandRaw, JulesStreamBus streamBus) {
+        if (commandRaw == null) {
+            return;
+        }
 
-        if (command.startsWith("DRIVE_FORWARD")) {
-            executeMovement(duration, power, 0, 0, command);
-        } else if (command.startsWith("DRIVE_BACKWARD")) {
-            executeMovement(duration, -power, 0, 0, command);
-        } else if (command.startsWith("STRAFE_LEFT")) {
-            executeMovement(duration, 0, -power, 0, command);
-        } else if (command.startsWith("STRAFE_RIGHT")) {
-            executeMovement(duration, 0, power, 0, command);
-        } else if (command.startsWith("TURN_LEFT")) {
-            executeMovement(duration, 0, 0, -power, command);
-        } else if (command.startsWith("TURN_RIGHT")) {
-            executeMovement(duration, 0, 0, power, command);
+        String command = commandRaw.trim();
+        if (command.isEmpty()) {
+            return;
+        }
+
+        String upper = command.toUpperCase(Locale.US);
+
+        double duration = Math.max(0, parseValue(upper, "T", 1.0));
+        double power = clampPower(parseValue(upper, "P", 0.5));
+
+        double magnitude = Math.abs(power);
+
+        if (upper.startsWith("DRIVE_FORWARD")) {
+            executeMovement(duration, magnitude, 0, 0, command, streamBus);
+        } else if (upper.startsWith("DRIVE_BACKWARD")) {
+            executeMovement(duration, -magnitude, 0, 0, command, streamBus);
+        } else if (upper.startsWith("STRAFE_LEFT")) {
+            executeMovement(duration, 0, -magnitude, 0, command, streamBus);
+        } else if (upper.startsWith("STRAFE_RIGHT")) {
+            executeMovement(duration, 0, magnitude, 0, command, streamBus);
+        } else if (upper.startsWith("TURN_LEFT")) {
+            executeMovement(duration, 0, 0, -magnitude, command, streamBus);
+        } else if (upper.startsWith("TURN_RIGHT")) {
+            executeMovement(duration, 0, 0, magnitude, command, streamBus);
+        } else if (upper.startsWith("STOP")) {
+            follower.setTeleOpDrive(0, 0, 0, true);
+            telemetry.addData("Command", "STOP");
+            telemetry.update();
+        } else {
+            telemetry.addData("Unknown Command", command);
+            telemetry.update();
         }
     }
 
     /**
      * Executes a teleop-style movement for a specified duration while streaming data.
      */
-    private void executeMovement(double duration, double y, double x, double r, String label) {
+    private void executeMovement(double duration, double y, double x, double r, String label, JulesStreamBus bus) {
         ElapsedTime timer = new ElapsedTime();
         double lastEmit = 0;
         final double PERIOD_S = 0.02; // 50 Hz data streaming rate
 
-        // Add a label to the data stream to mark the start of the test
-        streamBus.publishJsonLine(String.format("{\"label\":\"START: %s\"}", label));
+        boolean startLabelSent = false;
+        if (bus != null) {
+            bus.publishJsonLine(String.format("{\"label\":\"START: %s\"}", label));
+            startLabelSent = true;
+        }
 
         while (opModeIsActive() && timer.seconds() < duration) {
             // Keep odometry and robot state updated
@@ -140,7 +170,15 @@ public class JulesDevController extends LinearOpMode {
             if (now - lastEmit >= PERIOD_S) {
                 lastEmit = now;
                 Metrics m = tap.sample(imu, follower);
-                streamBus.publishJsonLine(JulesMetricsHttpAdapter.encodePublic(m));
+                JulesStreamBus currentBus = bus != null ? bus : bridgeManager.getStreamBus();
+                if (currentBus != null) {
+                    if (!startLabelSent) {
+                        currentBus.publishJsonLine(String.format("{\"label\":\"START: %s\"}", label));
+                        startLabelSent = true;
+                    }
+                    currentBus.publishJsonLine(JulesMetricsHttpAdapter.encodePublic(m));
+                    bus = currentBus;
+                }
             }
 
             telemetry.addData("Executing", "%s", label);
@@ -149,14 +187,17 @@ public class JulesDevController extends LinearOpMode {
         }
 
         // Add a label to mark the end of the test
-        streamBus.publishJsonLine(String.format("{\"label\":\"END: %s\"}", label));
+        JulesStreamBus endBus = bus != null ? bus : bridgeManager.getStreamBus();
+        if (startLabelSent && endBus != null) {
+            endBus.publishJsonLine(String.format("{\"label\":\"END: %s\"}", label));
+        }
     }
 
     /**
      * A helper to parse numeric values from a command string.
      */
     private double parseValue(String command, String id, double defaultValue) {
-        Pattern p = Pattern.compile("(\\d*\\.?\\d+)" + id);
+        Pattern p = Pattern.compile("([-+]?\\d*\\.?\\d+)" + id);
         Matcher m = p.matcher(command);
         if (m.find()) {
             try {
@@ -168,20 +209,18 @@ public class JulesDevController extends LinearOpMode {
         return defaultValue;
     }
 
+    private double clampPower(double power) {
+        if (Double.isNaN(power)) {
+            return 0;
+        }
+        return Math.max(-1.0, Math.min(1.0, power));
+    }
+
     // --- Helper methods for initialization ---
 
     private void setupJules() {
-        JulesBuffer buffer = new JulesBuffer(8192);
-        streamBus = new JulesStreamBus();
-        JulesBufferJsonAdapter adapter = new JulesBufferJsonAdapter(buffer);
-        String token = JulesTokenStore.getOrCreate(hardwareMap.appContext);
-
-        try {
-            http = new JulesHttpBridge(58080, adapter, adapter, token, streamBus);
-        } catch (IOException e) {
-            telemetry.addData("JULES FATAL", "Could not start HTTP bridge: " + e.getMessage());
-            http = null;
-        }
+        bridgeManager = JulesBridgeManager.getInstance();
+        bridgeManager.prepare(hardwareMap.appContext);
     }
 
     private void setupHardware() {

@@ -1,8 +1,8 @@
 package org.firstinspires.ftc.teamcode.jules;
 
 import android.content.Context;
-import com.qualcomm.robotcore.util.WebHandlerManager;
 import org.firstinspires.ftc.ftccommon.external.OnCreate;
+import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
 
 /**
  * This class uses the @OnCreate annotation to automatically initialize
@@ -16,7 +16,6 @@ public class JulesHooks {
      */
     @OnCreate
     public static void onCreate(Context context) {
-        // Initialize the JulesService here.
-        JulesService.init(context);
+        JulesBridgeManager.getInstance().prepare(context);
     }
 }

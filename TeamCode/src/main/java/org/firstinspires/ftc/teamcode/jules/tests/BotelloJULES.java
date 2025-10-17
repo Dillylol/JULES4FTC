@@ -11,7 +11,7 @@ import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.teamcode.jules.JulesBuilder;
-import org.firstinspires.ftc.teamcode.jules.JulesRamTx;
+import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
 
 @TeleOp(name = "BotelloJULES")
 public class BotelloJULES extends OpMode {
@@ -22,6 +22,7 @@ public class BotelloJULES extends OpMode {
 
     // This will hold the JulesBuilder instance for this OpMode
     private JulesBuilder jules;
+    private JulesBridgeManager bridgeManager;
 
     @Override
     public void init() {
@@ -44,18 +45,15 @@ public class BotelloJULES extends OpMode {
                 RevHubOrientationOnRobot.UsbFacingDirection.UP)));
 
         // --- JULES INITIALIZATION ---
-        // Create a transmitter that's aware of the OpMode's telemetry contexts.
-        JulesRamTx transmitter = new JulesRamTx(
-                8192, // Buffer capacity
-                PanelsTelemetry.INSTANCE.getTelemetry(), // Panels telemetry manager
-                telemetry, // Driver Station telemetry
-                "jules" // Topic prefix for Panels
+        bridgeManager = JulesBridgeManager.getInstance();
+        bridgeManager.prepare(hardwareMap.appContext);
+        jules = bridgeManager.newBuilder(
+                PanelsTelemetry.INSTANCE.getTelemetry(),
+                telemetry,
+                "jules/botello"
         );
-        // Create a builder that uses our new transmitter.
-        jules = new JulesBuilder(transmitter);
 
-
-        telemetry.addData("Jules", "Local builder is ready.");
+        telemetry.addLine(bridgeManager.getAdvertiseLine());
         telemetry.update();
     }
 
@@ -94,6 +92,7 @@ public class BotelloJULES extends OpMode {
         }
 
         telemetry.addData("Heading", "%.2f deg", Math.toDegrees(botHeading));
+        telemetry.addLine(bridgeManager.getAdvertiseLine());
         telemetry.update();
     }
 

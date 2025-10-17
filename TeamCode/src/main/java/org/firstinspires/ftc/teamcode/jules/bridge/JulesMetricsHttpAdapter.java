@@ -34,6 +34,9 @@ public class JulesMetricsHttpAdapter {
             String safeLabel = m.label.replace("\\", "\\\\").replace("\"", "\\\"");
             sb.append(",\"label\":\"").append(safeLabel).append("\"");
         }
+        if (m.jsonData != null && !m.jsonData.isEmpty()) {
+            sb.append(",\"data\":").append(m.jsonData);
+        }
         // -------------------------
 
         sb.append("}");
