@@ -13,8 +13,13 @@ public class JulesMetricsHttpAdapter {
     public static String encodePublic(Metrics m) {
         if (m == null) return "{}";
 
+        double tsSeconds = m.t;
+        long tsMillis = (long) Math.round(tsSeconds * 1000.0);
+
         StringBuilder sb = new StringBuilder(256);
-        sb.append("{\"ts\":").append(m.t)
+        sb.append("{\"type\":\"metrics\"")
+                .append(",\"ts_s\":").append(tsSeconds)
+                .append(",\"ts_ms\":").append(tsMillis)
                 .append(",\"cmd\":").append(m.cmdPower)
                 .append(",\"vel_ips\":").append(m.velIPS)
                 .append(",\"battery_v\":").append(m.batteryV)

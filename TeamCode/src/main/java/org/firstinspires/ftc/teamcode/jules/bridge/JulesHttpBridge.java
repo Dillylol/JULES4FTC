@@ -7,7 +7,17 @@ import static fi.iki.elonen.NanoHTTPD.Response.Status.NOT_FOUND;
 import static fi.iki.elonen.NanoHTTPD.Response.Status.OK;
 import static fi.iki.elonen.NanoHTTPD.Response.Status.UNAUTHORIZED;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonSyntaxException;
+
 import fi.iki.elonen.NanoHTTPD;
+import fi.iki.elonen.NanoHTTPD.IHTTPSession;
+import fi.iki.elonen.NanoWSD;
+import fi.iki.elonen.NanoWSD.WebSocket;
+import fi.iki.elonen.NanoWSD.WebSocketFrame;
+import fi.iki.elonen.NanoWSD.WebSocketFrame.CloseCode;
 
 import java.io.IOException;
 import java.net.Inet4Address;
@@ -43,7 +53,7 @@ import java.util.regex.Pattern;
  * Token is accepted as header "X-Jules-Token: <token>" OR query "?token=<token>".
  * Start in OpMode.init(), advertise in loop(), close in stop().
  */
-public class JulesHttpBridge extends NanoHTTPD implements AutoCloseable {
+public class JulesHttpBridge extends NanoWSD implements AutoCloseable {
 
     /** Supplies JSONL lines from recorded data. */
     public interface Dumper {
@@ -53,6 +63,8 @@ public class JulesHttpBridge extends NanoHTTPD implements AutoCloseable {
 
     /** Records a label marker into the dataset. */
     public interface Labeler { void addLabel(long epochMs, String text); }
+
+    private static final String WS_PATH = "/jules/stream";
 
     private final Dumper dumper;
     private final Labeler labeler;
@@ -86,11 +98,26 @@ public class JulesHttpBridge extends NanoHTTPD implements AutoCloseable {
     public String getToken()     { return token; }
     public int getBoundPort()    { return port; }
 
-    /** One-line DS telemetry string: http://IP:PORT  token=... */
+    /** One-line DS telemetry string advertising the WS endpoint. */
     public String advertiseLine() {
         List<String> ips = getLocalIPv4();
         String ip = ips.isEmpty() ? "0.0.0.0" : ips.get(0);
-        return "JULES → http://" + ip + ":" + port + "  token=" + token;
+        return "JULES → " + websocketUrlFor(ip, port) + "  token=" + token;
+    }
+
+    private String firstLocalIp() {
+        List<String> ips = getLocalIPv4();
+        return ips.isEmpty() ? "0.0.0.0" : ips.get(0);
+    }
+
+    public String websocketUrl(String host) {
+        String safeHost = (host == null || host.isEmpty()) ? "0.0.0.0" : host;
+        return websocketUrlFor(safeHost, port);
+    }
+
+    public static String websocketUrlFor(String host, int port) {
+        String safeHost = (host == null || host.isEmpty()) ? "0.0.0.0" : host;
+        return "ws://" + safeHost + ":" + port + WS_PATH;
     }
 
     /** Local site-local IPv4s for telemetry. */
@@ -113,7 +140,7 @@ public class JulesHttpBridge extends NanoHTTPD implements AutoCloseable {
     // ------------------------- HTTP -------------------------
 
     @Override
-    public Response serve(IHTTPSession session) {
+    protected Response serveHttp(final IHTTPSession session) {
         // Parse body so POST form params appear in session.getParms()
         Map<String,String> body = new HashMap<>();
         try { session.parseBody(body); } catch (Exception e) {
@@ -134,8 +161,14 @@ public class JulesHttpBridge extends NanoHTTPD implements AutoCloseable {
         try {
             // Handshake
             if (isHandshake) {
-                String json = "{\"ok\":true,\"token\":\"" + token + "\",\"time\":\"" + nowIso() + "\"}";
-                return json(OK, json);
+                JsonObject payload = new JsonObject();
+                payload.addProperty("ok", true);
+                payload.addProperty("token", token);
+                payload.addProperty("time", nowIso());
+                String ip = firstLocalIp();
+                payload.addProperty("ws_url", websocketUrlFor(ip, port));
+                payload.addProperty("http_url", "http://" + ip + ":" + port);
+                return json(OK, payload.toString());
             }
 
             // Dump
@@ -165,7 +198,13 @@ public class JulesHttpBridge extends NanoHTTPD implements AutoCloseable {
                 }
                 long t = parseLong(params.get("t"), System.currentTimeMillis());
                 if (labeler != null) labeler.addLabel(t, text);
-                return json(OK, "{\"ok\":true}");
+                publishLabelEvent(text.trim(), t, "http");
+                JsonObject response = new JsonObject();
+                response.addProperty("ok", true);
+                response.addProperty("type", "label");
+                response.addProperty("text", text.trim());
+                response.addProperty("ts_ms", t);
+                return json(OK, response.toString());
             }
 
             if ("/jules/command".equals(uri)) {
@@ -178,10 +217,14 @@ public class JulesHttpBridge extends NanoHTTPD implements AutoCloseable {
                 }
                 String sanitized = commandText.trim();
                 JulesCommand.setCommand(sanitized);
-                if (streamBus != null) {
-                    streamBus.publishJsonLine("{\"command\":\"" + escape(sanitized) + "\"}");
-                }
-                return json(OK, "{\"ok\":true, \"command_sent\":\"" + escape(sanitized) + "\"}");
+                long ts = System.currentTimeMillis();
+                publishCommandEvent(sanitized, ts, "http");
+                JsonObject response = new JsonObject();
+                response.addProperty("ok", true);
+                response.addProperty("type", "cmd");
+                response.addProperty("text", sanitized);
+                response.addProperty("ts_ms", ts);
+                return json(OK, response.toString());
             }
 
             // Live stream (SSE)
@@ -234,11 +277,238 @@ public class JulesHttpBridge extends NanoHTTPD implements AutoCloseable {
                 }
             }
 
+            // Requests that upgrade to WebSocket are handled by NanoWSD#serve
+
             // 404
             return json(NOT_FOUND, "{\"ok\":false,\"error\":\"not found\"}");
         } catch (Exception e) {
             String msg = e.getClass().getSimpleName() + ": " + (e.getMessage() == null ? "" : e.getMessage());
             return json(INTERNAL_ERROR, "{\"ok\":false,\"error\":\"" + escape(msg) + "\"}");
+        }
+    }
+
+    @Override
+    protected WebSocket openWebSocket(IHTTPSession handshake) {
+        return new BridgeWebSocket(handshake);
+    }
+
+    private final class BridgeWebSocket extends WebSocket {
+
+        private JulesStreamBus.Subscription subscription;
+        private Thread pumpThread;
+
+        private BridgeWebSocket(IHTTPSession handshakeRequest) {
+            super(handshakeRequest);
+        }
+
+        @Override
+        protected void onOpen() {
+            IHTTPSession request = getHandshakeRequest();
+            if (!authorized(request.getParms(), request.getHeaders())) {
+                try {
+                    close(CloseCode.PolicyViolation, "unauthorized", false);
+                } catch (IOException ignored) { }
+                return;
+            }
+            if (streamBus == null) {
+                sendErrorFrame("stream_unavailable", "stream not enabled", null);
+                try {
+                    close(CloseCode.UnexpectedCondition, "stream not enabled", false);
+                } catch (IOException ignored) { }
+                return;
+            }
+
+            subscription = streamBus.subscribe();
+            pumpThread = new Thread(this::pump, "JulesWsPump" + hashCode());
+            pumpThread.setDaemon(true);
+            pumpThread.start();
+            sendAnnounceFrame();
+        }
+
+        private void pump() {
+            try {
+                while (true) {
+                    String line = subscription != null ? subscription.take() : null;
+                    if (line == null) {
+                        break;
+                    }
+                    safeSend(line);
+                }
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        @Override
+        protected void onMessage(WebSocketFrame message) {
+            if (message == null || message.getOpCode() != WebSocketFrame.OpCode.Text) {
+                return;
+            }
+            handleIncoming(message.getTextPayload());
+        }
+
+        private void handleIncoming(String payload) {
+            if (payload == null) {
+                return;
+            }
+            String trimmed = payload.trim();
+            if (trimmed.isEmpty()) {
+                return;
+            }
+            JsonObject obj;
+            try {
+                JsonElement parsed = JsonParser.parseString(trimmed);
+                if (!parsed.isJsonObject()) {
+                    sendErrorFrame("bad_payload", "expected object", null);
+                    return;
+                }
+                obj = parsed.getAsJsonObject();
+            } catch (JsonSyntaxException ex) {
+                sendErrorFrame("bad_json", ex.getMessage(), null);
+                return;
+            }
+
+            String type = optString(obj, "type");
+            if (type == null) {
+                sendErrorFrame("missing_type", "frame missing 'type'", obj);
+                return;
+            }
+            switch (type.toLowerCase(Locale.US)) {
+                case "cmd":
+                case "command":
+                    handleCommandFrame(obj);
+                    break;
+                case "label":
+                    handleLabelFrame(obj);
+                    break;
+                case "ping":
+                    handlePingFrame(obj);
+                    break;
+                default:
+                    sendErrorFrame("unsupported_type", type, obj);
+                    break;
+            }
+        }
+
+        private void handleCommandFrame(JsonObject obj) {
+            String text = optString(obj, "text");
+            if (text == null) {
+                text = optString(obj, "command");
+            }
+            if (text == null || text.trim().isEmpty()) {
+                sendErrorFrame("missing_command", "command text missing", obj);
+                return;
+            }
+            String sanitized = text.trim();
+            JulesCommand.setCommand(sanitized);
+            long ts = System.currentTimeMillis();
+            publishCommandEvent(sanitized, ts, "ws");
+            sendAckFrame("cmd", sanitized, ts, obj);
+        }
+
+        private void handleLabelFrame(JsonObject obj) {
+            String text = optString(obj, "text");
+            if (text == null || text.trim().isEmpty()) {
+                sendErrorFrame("missing_text", "label text missing", obj);
+                return;
+            }
+            long ts = obj.has("ts_ms") && obj.get("ts_ms").isJsonPrimitive()
+                    ? obj.get("ts_ms").getAsLong()
+                    : System.currentTimeMillis();
+            publishLabelEvent(text.trim(), ts, "ws");
+            if (labeler != null) {
+                labeler.addLabel(ts, text.trim());
+            }
+            sendAckFrame("label", text.trim(), ts, obj);
+        }
+
+        private void handlePingFrame(JsonObject obj) {
+            long now = System.currentTimeMillis();
+            JsonObject pong = new JsonObject();
+            pong.addProperty("type", "pong");
+            pong.addProperty("ts_ms", now);
+            if (obj.has("id")) {
+                pong.add("id", obj.get("id"));
+            }
+            if (obj.has("t0")) {
+                pong.add("t0", obj.get("t0"));
+            }
+            pong.addProperty("t1", now);
+            safeSend(pong.toString());
+        }
+
+        private void sendAnnounceFrame() {
+            JsonObject announce = new JsonObject();
+            announce.addProperty("type", "announce");
+            long now = System.currentTimeMillis();
+            announce.addProperty("ts_ms", now);
+            String ip = firstLocalIp();
+            announce.addProperty("ws_url", websocketUrlFor(ip, port));
+            announce.addProperty("http_url", "http://" + ip + ":" + port);
+            announce.addProperty("token", token);
+            safeSend(announce.toString());
+        }
+
+        private void sendAckFrame(String action, String text, long ts, JsonObject request) {
+            JsonObject ack = new JsonObject();
+            ack.addProperty("type", "ack");
+            ack.addProperty("action", action);
+            ack.addProperty("ts_ms", System.currentTimeMillis());
+            ack.addProperty("command_ts_ms", ts);
+            if (text != null) {
+                ack.addProperty("text", text);
+            }
+            if (request != null) {
+                if (request.has("id")) {
+                    ack.add("id", request.get("id"));
+                }
+                if (request.has("t0")) {
+                    ack.add("t0", request.get("t0"));
+                }
+            }
+            safeSend(ack.toString());
+        }
+
+        private void sendErrorFrame(String code, String message, JsonObject request) {
+            JsonObject error = new JsonObject();
+            error.addProperty("type", "error");
+            error.addProperty("code", code);
+            if (message != null) {
+                error.addProperty("message", message);
+            }
+            error.addProperty("ts_ms", System.currentTimeMillis());
+            if (request != null && request.has("id")) {
+                error.add("id", request.get("id"));
+            }
+            safeSend(error.toString());
+        }
+
+        private void safeSend(String text) {
+            try {
+                send(text);
+            } catch (IOException ignored) { }
+        }
+
+        @Override
+        protected void onClose(CloseCode code, String reason, boolean initiatedByRemote) {
+            if (subscription != null) {
+                subscription.close();
+                subscription = null;
+            }
+            if (pumpThread != null) {
+                pumpThread.interrupt();
+                pumpThread = null;
+            }
+        }
+
+        @Override
+        protected void onPong(WebSocketFrame pong) {
+            // ignored
+        }
+
+        @Override
+        protected void onException(IOException exception) {
+            sendErrorFrame("io_exception", exception.getMessage(), null);
         }
     }
 
@@ -250,10 +520,72 @@ public class JulesHttpBridge extends NanoHTTPD implements AutoCloseable {
 
     // ------------------------- Helpers -------------------------
 
+    private static String optString(JsonObject obj, String key) {
+        if (obj == null || key == null || !obj.has(key)) {
+            return null;
+        }
+        JsonElement element = obj.get(key);
+        if (element == null || element.isJsonNull()) {
+            return null;
+        }
+        try {
+            return element.getAsString();
+        } catch (ClassCastException | IllegalStateException ignored) {
+            return null;
+        }
+    }
+
+    private void publishCommandEvent(String command, long timestampMs, String source) {
+        if (streamBus == null || command == null || command.isEmpty()) {
+            return;
+        }
+        JsonObject event = new JsonObject();
+        event.addProperty("type", "cmd");
+        event.addProperty("ts_ms", timestampMs);
+        event.addProperty("text", command);
+        if (source != null && !source.isEmpty()) {
+            event.addProperty("source", source);
+        }
+        streamBus.publishJsonLine(event.toString());
+    }
+
+    private void publishLabelEvent(String text, long timestampMs, String source) {
+        if (streamBus == null || text == null || text.isEmpty()) {
+            return;
+        }
+        JsonObject event = new JsonObject();
+        event.addProperty("type", "label");
+        event.addProperty("ts_ms", timestampMs);
+        event.addProperty("text", text);
+        if (source != null && !source.isEmpty()) {
+            event.addProperty("source", source);
+        }
+        streamBus.publishJsonLine(event.toString());
+    }
+
     private boolean authorized(Map<String,String> params, Map<String,String> headers) {
+        if (token == null || token.isEmpty()) {
+            return true;
+        }
         String q = params.get("token");
-        String h = headers.get("x-jules-token");
-        return token.equals(q) || token.equals(h);
+        if (token.equals(q)) {
+            return true;
+        }
+        String headerToken = headers.get("x-jules-token");
+        if (token.equals(headerToken)) {
+            return true;
+        }
+        String auth = headers.get("authorization");
+        if (auth != null) {
+            String normalized = auth.trim();
+            if (normalized.regionMatches(true, 0, "Bearer ", 0, 7)) {
+                String bearer = normalized.substring(7).trim();
+                if (token.equals(bearer)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static long parseLong(String s, long def) {

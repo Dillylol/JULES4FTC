@@ -103,10 +103,12 @@ public class JulesBridgeSwitch extends OpMode {
         int retries = (status != null) ? status.retryCount : 0;
         String lastError = (status != null) ? status.lastError : null;
         String advertise = (status != null) ? nullSafe(status.advertiseLine) : nullSafe(manager.getAdvertiseLine());
+        String wsUrl = (status != null) ? nullSafe(status.wsUrl) : nullSafe(manager.getWsUrl());
 
         telemetry.addData("Status", state);
         telemetry.addData("IP", nullSafe(ip));
         telemetry.addData("Port", port);
+        telemetry.addData("WS URL", wsUrl);
         telemetry.addData("Token", tokenMasked);
         telemetry.addData("Uptime", formatDuration(uptime));
         telemetry.addData("Retries", retries);
@@ -121,6 +123,7 @@ public class JulesBridgeSwitch extends OpMode {
             panelsTl.addData("Status", state);
             panelsTl.addData("IP", nullSafe(ip));
             panelsTl.addData("Port", port);
+            panelsTl.addData("WS URL", wsUrl);
             panelsTl.addData("Token", nullSafe(tokenFull));
             panelsTl.addData("Uptime", formatDuration(uptime));
             panelsTl.addData("Retries", retries);

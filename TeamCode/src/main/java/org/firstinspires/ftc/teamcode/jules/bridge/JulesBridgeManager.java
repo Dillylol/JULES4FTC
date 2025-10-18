@@ -4,10 +4,13 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import com.bylazar.telemetry.TelemetryManager;
-import org.firstinspires.ftc.teamcode.jules.opmode.JulesBridgeSwitch;
+import com.google.gson.JsonObject;
+
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.jules.JulesBuilder;
 import org.firstinspires.ftc.teamcode.jules.JulesRamTx;
+import org.firstinspires.ftc.teamcode.jules.link.JulesUdpBeacon;
+import org.firstinspires.ftc.teamcode.jules.opmode.JulesBridgeSwitch;
 import java.io.IOException;
 import java.util.List;
 import java.util.Locale;
@@ -39,6 +42,7 @@ public final class JulesBridgeManager {
         public final int retryCount;
         public final String advertiseLine;
         public final String lastError;
+        public final String wsUrl;
 
         Status(boolean running,
                String ip,
@@ -48,7 +52,8 @@ public final class JulesBridgeManager {
                long uptimeMs,
                int retryCount,
                String advertiseLine,
-               String lastError) {
+               String lastError,
+               String wsUrl) {
             this.running = running;
             this.ip = ip;
             this.port = port;
@@ -58,6 +63,7 @@ public final class JulesBridgeManager {
             this.retryCount = retryCount;
             this.advertiseLine = advertiseLine;
             this.lastError = lastError;
+            this.wsUrl = wsUrl;
         }
     }
 
@@ -77,6 +83,7 @@ public final class JulesBridgeManager {
     private JulesBufferJsonAdapter adapter;
     private JulesHttpBridge httpBridge;
     private ScheduledExecutorService heartbeatExecutor;
+    private JulesUdpBeacon udpBeacon;
 
     private boolean running;
     private boolean starting;
@@ -86,6 +93,7 @@ public final class JulesBridgeManager {
     private String lastToken;
     private String lastAdvertise;
     private String lastError;
+    private String lastWsUrl;
 
     private JulesBridgeManager() {
     }
@@ -112,6 +120,9 @@ public final class JulesBridgeManager {
             }
             if (lastIp == null || lastIp.isEmpty()) {
                 lastIp = defaultIp();
+            }
+            if (lastWsUrl == null || lastWsUrl.isEmpty()) {
+                lastWsUrl = JulesHttpBridge.websocketUrlFor(lastIp, PORT);
             }
             autoStart = isAutoEnabledLocked();
             ip = lastIp;
@@ -217,16 +228,36 @@ public final class JulesBridgeManager {
         heartbeatExecutor = Executors.newSingleThreadScheduledExecutor(nonDaemonFactory("JULES-Heartbeat"));
         heartbeatExecutor.scheduleAtFixedRate(() -> {
             JulesStreamBus bus;
+            String ip;
+            String token;
             long uptime;
+            JulesUdpBeacon beacon;
             synchronized (lock) {
                 if (!running || streamBus == null) {
                     return;
                 }
                 bus = streamBus;
+                ip = lastIp != null ? lastIp : defaultIp();
+                token = lastToken;
                 uptime = System.currentTimeMillis() - startTimestampMs;
+                beacon = udpBeacon;
             }
-            bus.publishJsonLine(String.format(Locale.US,
-                    "{\"heartbeat\":true,\"uptime_ms\":%d}", uptime));
+            long now = System.currentTimeMillis();
+            JsonObject heartbeat = new JsonObject();
+            heartbeat.addProperty("type", "heartbeat");
+            heartbeat.addProperty("ts_ms", now);
+            heartbeat.addProperty("uptime_ms", uptime);
+            heartbeat.addProperty("ip", ip);
+            heartbeat.addProperty("port", PORT);
+            if (token != null) {
+                heartbeat.addProperty("token", token);
+            }
+            String wsUrl = JulesHttpBridge.websocketUrlFor(ip, PORT);
+            heartbeat.addProperty("ws_url", wsUrl);
+            bus.publishJsonLine(heartbeat.toString());
+            if (beacon != null) {
+                beacon.sendHeartbeat(heartbeat, wsUrl);
+            }
         }, HEARTBEAT_PERIOD_MS, HEARTBEAT_PERIOD_MS, TimeUnit.MILLISECONDS);
     }
 
@@ -276,7 +307,8 @@ public final class JulesBridgeManager {
                     uptime,
                     failureCount,
                     getAdvertiseLineInternal(),
-                    lastError
+                    lastError,
+                    lastWsUrl != null ? lastWsUrl : JulesHttpBridge.websocketUrlFor(lastIp != null ? lastIp : defaultIp(), PORT)
             );
         }
     }
@@ -297,6 +329,8 @@ public final class JulesBridgeManager {
     private String getAdvertiseLineInternal() {
         if (running && httpBridge != null) {
             lastAdvertise = httpBridge.advertiseLine();
+            String ip = lastIp != null ? lastIp : defaultIp();
+            lastWsUrl = httpBridge.websocketUrl(ip);
             return lastAdvertise;
         }
         if (lastAdvertise == null) {
@@ -308,6 +342,16 @@ public final class JulesBridgeManager {
     public String getToken() {
         synchronized (lock) {
             return lastToken;
+        }
+    }
+
+    public String getWsUrl() {
+        synchronized (lock) {
+            if (lastWsUrl == null) {
+                String ip = lastIp != null ? lastIp : defaultIp();
+                lastWsUrl = JulesHttpBridge.websocketUrlFor(ip, PORT);
+            }
+            return lastWsUrl;
         }
     }
 
@@ -348,7 +392,11 @@ public final class JulesBridgeManager {
         if (masked == null || masked.isEmpty()) {
             masked = "n/a";
         }
-        return String.format(Locale.US, "JULES bridge stopped – IP %s  token=%s", ip, masked);
+        lastWsUrl = JulesHttpBridge.websocketUrlFor(ip, PORT);
+        return String.format(Locale.US,
+                "JULES bridge stopped – %s  token=%s",
+                lastWsUrl,
+                masked);
     }
 
     private static String randomToken() {
@@ -362,11 +410,19 @@ public final class JulesBridgeManager {
         JulesStreamBus newStreamBus = new JulesStreamBus();
         JulesBufferJsonAdapter newAdapter = new JulesBufferJsonAdapter(newBuffer);
         JulesHttpBridge newBridge;
+        JulesUdpBeacon newUdpBeacon;
+
+        try {
+            newUdpBeacon = new JulesUdpBeacon();
+        } catch (IOException e) {
+            newUdpBeacon = null;
+        }
 
         try {
             newBridge = new JulesHttpBridge(PORT, newAdapter, newAdapter, token, newStreamBus);
         } catch (IOException e) {
             safeClose(newStreamBus);
+            safeClose(newUdpBeacon);
             synchronized (lock) {
                 starting = false;
                 running = false;
@@ -382,40 +438,52 @@ public final class JulesBridgeManager {
             streamBus = newStreamBus;
             adapter = newAdapter;
             httpBridge = newBridge;
+            udpBeacon = newUdpBeacon;
             running = true;
             starting = false;
             startTimestampMs = System.currentTimeMillis();
             lastToken = token;
             lastIp = ip;
             lastAdvertise = httpBridge.advertiseLine();
+            lastWsUrl = httpBridge.websocketUrl(ip);
             lastError = null;
             stopHeartbeatLocked();
             startHeartbeatLocked();
         }
 
-        newStreamBus.publishJsonLine(String.format(Locale.US,
-                "{\"event\":\"bridge_started\",\"ip\":\"%s\",\"port\":%d}", ip, PORT));
+        JsonObject started = new JsonObject();
+        started.addProperty("type", "event");
+        started.addProperty("event", "bridge_started");
+        started.addProperty("ip", ip);
+        started.addProperty("port", PORT);
+        started.addProperty("ws_url", JulesHttpBridge.websocketUrlFor(ip, PORT));
+        started.addProperty("ts_ms", System.currentTimeMillis());
+        newStreamBus.publishJsonLine(started.toString());
         return true;
     }
 
     private void doStop() {
         JulesHttpBridge bridgeToClose;
         JulesStreamBus busToClose;
+        JulesUdpBeacon beaconToClose;
         synchronized (lock) {
             running = false;
             starting = false;
             stopHeartbeatLocked();
             bridgeToClose = httpBridge;
             busToClose = streamBus;
+            beaconToClose = udpBeacon;
             httpBridge = null;
             streamBus = null;
             adapter = null;
             buffer = null;
+            udpBeacon = null;
             lastAdvertise = offlineAdvert();
         }
 
         safeClose(bridgeToClose);
         safeClose(busToClose);
+        safeClose(beaconToClose);
     }
 
     private void safeClose(AutoCloseable closeable) {
