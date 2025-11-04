@@ -8,7 +8,7 @@ import com.qualcomm.robotcore.hardware.Gamepad;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
-import org.firstinspires.ftc.teamcode.jules.bridge.JulesHttpBridge;
+import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesStreamBus;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesCommand;
 import org.firstinspires.ftc.teamcode.jules.bridge.util.GsonCompat;
@@ -18,7 +18,6 @@ import org.firstinspires.ftc.teamcode.jules.bridge.util.GsonCompat;
 import com.bylazar.telemetry.PanelsTelemetry;
 import com.bylazar.gamepad.PanelsGamepad;
 
-import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Locale;
@@ -39,9 +38,9 @@ import java.util.Locale;
 public class JULESSimDrive extends OpMode {
 
     // ---- JULES plumbing ----
-    private static final int PORT = 58080;
+    private JulesBridgeManager bridgeManager;
     private JulesStreamBus streamBus;
-    private JulesHttpBridge bridge;
+    private int bridgePort = 58080;
 
     // ---- Sim state ----
     private final VirtualMotor lf = new VirtualMotor("lf");
@@ -74,13 +73,13 @@ public class JULESSimDrive extends OpMode {
 
     @Override
     public void init() {
-        // JULES streaming
-        streamBus = new JulesStreamBus();
-        try {
-            bridge = new JulesHttpBridge(PORT, /*dumper*/ null, /*labeler*/ null, /*token*/ null, /*stream*/ streamBus);
-        } catch (IOException e) {
-            telemetry.addLine("JULES bridge failed: " + e.getMessage());
-            bridge = null; // continue offline
+        // JULES streaming via shared bridge manager
+        bridgeManager = JulesBridgeManager.getInstance();
+        if (bridgeManager != null) {
+            // Ensure the manager knows about our context; it will only auto-start if previously configured
+            bridgeManager.prepare(hardwareMap.appContext);
+            bridgePort = bridgeManager.getPort();
+            streamBus = bridgeManager.getStreamBus();
         }
 
         // Panels telemetry + gamepad managers (use Kotlin object INSTANCE from Java)
@@ -103,10 +102,19 @@ public class JULESSimDrive extends OpMode {
 
         ptInfo("JULES SimDrive (Panels) online");
         telemetry.addLine("JULES SimDrive (Panels) online");
-        if (bridge != null) {
-            String adv = bridge.advertiseLine();
+        if (bridgeManager != null) {
+            String adv = bridgeManager.getAdvertiseLine();
             telemetry.addLine(adv);
             ptInfo(adv);
+            if (bridgeManager.getStreamBus() == null) {
+                String offline = "JULES bridge offline - run 'JULES: Enable & Status'.";
+                telemetry.addLine(offline);
+                ptInfo(offline);
+            }
+        } else {
+            String offline = "JULES bridge unavailable.";
+            telemetry.addLine(offline);
+            ptInfo(offline);
         }
         telemetry.update();
 
@@ -179,8 +187,6 @@ public class JULESSimDrive extends OpMode {
 
     @Override
     public void stop() {
-        try { if (bridge != null) bridge.close(); } catch (Exception ignored) {}
-        try { if (streamBus != null) streamBus.close(); } catch (Exception ignored) {}
     }
 
     // ------------------------------------------------------------
@@ -395,7 +401,7 @@ public class JULESSimDrive extends OpMode {
         hb.addProperty("uptime_ms", (long) loopTimer.milliseconds());
         hb.addProperty("active_opmode", "JULES SimDrive (Panels)");
         hb.addProperty("battery_v", 12.5);
-        hb.addProperty("port", PORT);
+        hb.addProperty("port", bridgePort);
         busPublish(hb.toString());
     }
 
@@ -471,12 +477,23 @@ public class JULESSimDrive extends OpMode {
     }
 
     private void busPublish(String json) {
-        if (streamBus == null || json == null) return;
+        if (json == null) return;
+        JulesStreamBus bus = resolveStreamBus();
+        if (bus == null) return;
         try {
-            for (String m : new String[]{"publish","send","offer","post","emit","append","enqueue"}) {
-                try { Method mm = streamBus.getClass().getMethod(m, String.class); mm.invoke(streamBus, json); return; } catch (NoSuchMethodException ignored) {}
-            }
+            bus.publishJsonLine(json);
         } catch (Throwable ignored) {}
+    }
+
+    private JulesStreamBus resolveStreamBus() {
+        if (bridgeManager != null) {
+            JulesStreamBus shared = bridgeManager.getStreamBus();
+            if (shared != null) {
+                streamBus = shared;
+                return shared;
+            }
+        }
+        return streamBus;
     }
 
     // ------------------------------------------------------------
