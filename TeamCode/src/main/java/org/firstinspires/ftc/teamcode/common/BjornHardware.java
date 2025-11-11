@@ -17,6 +17,7 @@ public final class BjornHardware {
     public final DcMotor backRight;
     public final DcMotorEx intake;
     public final DcMotorEx wheel;
+    public final DcMotorEx wheel2;
     public final Servo lift;
     public final DistanceSensor frontTof;
     public final IMU imu;
@@ -28,6 +29,7 @@ public final class BjornHardware {
         backRight  = map.get(DcMotor.class, BjornConstants.Motors.BACK_RIGHT);
         intake     = map.get(DcMotorEx.class, BjornConstants.Motors.INTAKE);
         wheel      = map.get(DcMotorEx.class, BjornConstants.Motors.WHEEL);
+        wheel2      = map.get(DcMotorEx.class, BjornConstants.Motors.WHEEL2);
         lift       = map.get(Servo.class, BjornConstants.Servos.LIFT);
         frontTof   = map.get(DistanceSensor.class, BjornConstants.Sensors.TOF_FRONT);
         imu        = map.get(IMU.class, BjornConstants.Sensors.IMU);
@@ -69,10 +71,15 @@ public final class BjornHardware {
     private void configureMechanisms() {
         intake.setDirection(BjornConstants.Motors.INTAKE_DIRECTION);
         intake.setZeroPowerBehavior(BjornConstants.Motors.INTAKE_ZERO_POWER);
+        wheel2.setDirection(BjornConstants.Motors.WHEEL2_DIRECTION);
     }
 
     public void resetWheelEncoder() {
         wheel.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         wheel.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        wheel2.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        wheel2.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+
+
     }
 }

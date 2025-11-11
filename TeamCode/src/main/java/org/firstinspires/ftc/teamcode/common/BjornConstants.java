@@ -23,6 +23,7 @@ public final class BjornConstants {
         public static final String BACK_RIGHT  = "rr";
         public static final String INTAKE      = "Intake";
         public static final String WHEEL       = "Wheel";
+        public static final String WHEEL2       = "Wheel2";
 
         // Default behaviors
         public static final DcMotor.Direction DRIVE_DIRECTION = DcMotor.Direction.REVERSE;
@@ -30,6 +31,8 @@ public final class BjornConstants {
 
         public static final DcMotor.Direction INTAKE_DIRECTION = DcMotor.Direction.REVERSE;
         public static final DcMotor.ZeroPowerBehavior INTAKE_ZERO_POWER = DcMotor.ZeroPowerBehavior.BRAKE;
+        public static final DcMotor.Direction WHEEL2_DIRECTION = DcMotor.Direction.REVERSE; // flip if needed
+
     }
 
     public static final class Servos {

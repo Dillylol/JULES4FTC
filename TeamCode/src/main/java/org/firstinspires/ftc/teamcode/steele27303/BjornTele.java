@@ -6,14 +6,14 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
-import com.qualcomm.robotcore.hardware.DistanceSensor;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
-
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import com.qualcomm.robotcore.hardware.DistanceSensor;
+
 import org.firstinspires.ftc.teamcode.common.BjornConstants;
 import org.firstinspires.ftc.teamcode.common.BjornHardware;
 
@@ -26,7 +26,7 @@ public class BjornTele extends OpMode {
     private DcMotor BackL, BackR, FrontL, FrontR;
 
     // Mechanisms (use DcMotorEx so we can read velocity)
-    private DcMotorEx Intake, Wheel;
+    private DcMotorEx Intake, Wheel, Wheel2;  // +Wheel2
 
     // Lift servo (no motion in init)
     private Servo Lift;
@@ -41,8 +41,6 @@ public class BjornTele extends OpMode {
     private DistanceSensor tofFront;
 
     // ===== Dual-Gamepad Redundancy =====
-    // Master switch (on gamepad1 D-Pad LEFT) grants full DRIVE control to gamepad2.
-    // Regardless of master, gamepad2 ALWAYS has full control of INTAKE and WHEEL systems.
     private boolean g2DriveMaster = false; // when true, gamepad2 drives
     private boolean g1DpadLeftPrev = false; // edge detect for master toggle
 
@@ -103,6 +101,7 @@ public class BjornTele extends OpMode {
 
         Intake = hardware.intake;
         Wheel  = hardware.wheel;
+        Wheel2 = hardware.wheel2;   // NEW
 
         Lift   = hardware.lift;
         tofFront = hardware.frontTof;
@@ -217,33 +216,40 @@ public class BjornTele extends OpMode {
             }
         }
 
-        // ===== Apply wheel control =====
-        final double wheelTps  = safeVel(Wheel);
-        final double wheelRpm  = toRPM(wheelTps, WHEEL_TPR);
+        // ===== Apply wheel control + gather wheel telemetry =====
+        final double wheel1Tps  = safeVel(Wheel);
+        final double wheel2Tps  = safeVel(Wheel2);
+        final double wheel1Rpm  = toRPM(wheel1Tps, WHEEL_TPR);
+        final double wheel2Rpm  = toRPM(wheel2Tps, WHEEL_TPR);
 
         if (Wheel.getMode() != DcMotor.RunMode.RUN_USING_ENCODER) {
             Wheel.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        }
+        if (Wheel2.getMode() != DcMotor.RunMode.RUN_USING_ENCODER) {
+            Wheel2.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         }
 
         double v = getBatteryVoltage();
         double scale = 12.5 / Math.max(10.0, v);
 
         if (isWheelOn) {
-            // Dynamic mode: hold targetWheelRPM
             double targetTps = (targetWheelRPM / 60.0) * WHEEL_TPR * scale;
             Wheel.setVelocity(targetTps);
+            Wheel2.setVelocity(targetTps);     // mirror
         } else if (idleSpinEnabled) {
-            // Idle momentum mode
             double idleTps = (IDLE_RPM / 60.0) * WHEEL_TPR * scale;
             Wheel.setVelocity(idleTps);
+            Wheel2.setVelocity(idleTps);       // mirror
         } else {
             Wheel.setPower(0.0);
+            Wheel2.setPower(0.0);              // mirror
         }
 
         // ===== Dynamic Auto-Lift (target band + dwell) =====
         long nowMs = (long)(getRuntime() * 1000.0);
         boolean inBand = isWheelOn && (targetWheelRPM >= READY_MIN_TARGET_RPM)
-                && (Math.abs(wheelRpm - targetWheelRPM) <= READY_TOL_RPM);
+                && (Math.abs(wheel1Rpm - targetWheelRPM) <= READY_TOL_RPM)
+                && (Math.abs(wheel2Rpm - targetWheelRPM) <= READY_TOL_RPM);
 
         if (inBand) {
             if (readyBandEnterMs < 0) readyBandEnterMs = nowMs;
@@ -260,27 +266,40 @@ public class BjornTele extends OpMode {
             }
         }
 
-        // ===== Driver Station (minimal) =====
+        // ===== Driver Station (expanded wheel telemetry) =====
         double tofNowIn = safeTofInches(tofFront);
         double tofNowFt = (tofNowIn > 0) ? tofNowIn/12.0 : Double.NaN;
         double distFtDisplay = (!Double.isNaN(lastScanFt)) ? lastScanFt
                 : (!Double.isNaN(tofNowFt) ? tofNowFt : Double.NaN);
+
+        telemetry.addLine("=== DRIVE ===");
         telemetry.addData("Active Driver", g2DriveMaster ? "Gamepad2" : "Gamepad1");
         telemetry.addData("G2 Drive Master", g2DriveMaster);
-        telemetry.addData("Wheel RPM tgt", "%.0f", isWheelOn ? targetWheelRPM : (idleSpinEnabled ? IDLE_RPM : 0.0));
-        telemetry.addData("Wheel RPM act", "%.0f", wheelRpm);
-        telemetry.addData("Distance (ft)", (Double.isNaN(distFtDisplay) ? "—" : String.format("%.2f", distFtDisplay)));
+
+        telemetry.addLine("=== SHOOTER ===");
         telemetry.addData("Mode", isWheelOn ? "DYNAMIC" : (idleSpinEnabled ? "IDLE" : "OFF"));
+        telemetry.addData("Target RPM", "%.0f", isWheelOn ? targetWheelRPM : (idleSpinEnabled ? IDLE_RPM : 0.0));
+        telemetry.addData("Wheel1 RPM", "%.0f", wheel1Rpm);
+        telemetry.addData("Wheel2 RPM", "%.0f", wheel2Rpm);
+        telemetry.addData("Wheel1 Pwr", "%.2f", Wheel.getPower());
+        telemetry.addData("Wheel2 Pwr", "%.2f", Wheel2.getPower());
+        telemetry.addData("Battery V", "%.2f", v);
+
+        telemetry.addLine("=== RANGE ===");
+        telemetry.addData("Distance (ft)", (Double.isNaN(distFtDisplay) ? "—" : String.format("%.2f", distFtDisplay)));
         telemetry.update();
 
-        // ===== Panels (debug) =====
+        // ===== Panels (expanded shooter metrics) =====
         panels.addData("ActiveDriver", g2DriveMaster ? "G2" : "G1");
         panels.addData("G2DriveMaster", g2DriveMaster);
-        panels.addData("Wheel_ON(DYN)",  isWheelOn);
-        panels.addData("IdleSpin", idleSpinEnabled);
+        panels.addData("Mode", isWheelOn ? "DYN" : (idleSpinEnabled ? "IDLE" : "OFF"));
         panels.addData("RPM_target", targetWheelRPM);
-        panels.addData("Battery_V",  getBatteryVoltage());
-        panels.addData("LiftRaised", liftIsRaised);
+        panels.addData("RPM1_act", wheel1Rpm);
+        panels.addData("RPM2_act", wheel2Rpm);
+        panels.addData("Pwr1", Wheel.getPower());
+        panels.addData("Pwr2", Wheel2.getPower());
+        panels.addData("Battery_V", v);
+        if (!Double.isNaN(lastScanFt)) panels.addData("ScanFt", lastScanFt);
         panels.update();
     }
 
