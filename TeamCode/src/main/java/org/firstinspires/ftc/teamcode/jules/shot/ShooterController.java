@@ -37,6 +37,7 @@ public final class ShooterController {
     private static final double EMA_ALPHA = 0.2;
 
     private final DcMotorEx flywheel;
+    private final DcMotorEx flywheelSecondary;
     private final DcMotorEx intake;
     private final Servo lift;
 
@@ -60,9 +61,11 @@ public final class ShooterController {
     private long intakePulseEndNs;
 
     public ShooterController(@Nullable DcMotorEx flywheel,
+                             @Nullable DcMotorEx flywheelSecondary,
                              @Nullable DcMotorEx intake,
                              @Nullable Servo lift) {
         this.flywheel = flywheel;
+        this.flywheelSecondary = flywheelSecondary;
         this.intake = intake;
         this.lift = lift;
         this.targetRpm = 0;
@@ -211,26 +214,26 @@ public final class ShooterController {
     }
 
     private void commandFlywheel(int rpm) {
-        if (flywheel == null) {
+        if (flywheel == null && flywheelSecondary == null) {
             return;
         }
         double ticksPerSecond = rpm * TICKS_PER_REV / 60.0;
-        try {
-            flywheel.setVelocity(ticksPerSecond);
-        } catch (Exception ignored) {
+        setVelocitySafe(flywheel, ticksPerSecond);
+        setVelocitySafe(flywheelSecondary, ticksPerSecond);
+        if (rpm <= 0) {
+            setPowerSafe(flywheel, 0.0);
+            setPowerSafe(flywheelSecondary, 0.0);
         }
     }
 
     private double readRpm() {
-        if (flywheel == null) {
+        if (flywheel == null && flywheelSecondary == null) {
             return 0.0;
         }
-        try {
-            double velocity = flywheel.getVelocity();
-            return (velocity / TICKS_PER_REV) * 60.0;
-        } catch (Exception e) {
-            return 0.0;
-        }
+        double v1 = safeVelocity(flywheel);
+        double v2 = safeVelocity(flywheelSecondary);
+        double avg = (flywheelSecondary != null) ? 0.5 * (v1 + v2) : v1;
+        return (avg / TICKS_PER_REV) * 60.0;
     }
 
     private void pulseIntake() {
@@ -281,6 +284,37 @@ public final class ShooterController {
         if (liftCloseAtMs > 0L && nowMs >= liftCloseAtMs) {
             closeLift();
             liftCloseAtMs = 0L;
+        }
+    }
+
+    private static void setVelocitySafe(@Nullable DcMotorEx motor, double ticksPerSecond) {
+        if (motor == null) {
+            return;
+        }
+        try {
+            motor.setVelocity(ticksPerSecond);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static double safeVelocity(@Nullable DcMotorEx motor) {
+        if (motor == null) {
+            return 0.0;
+        }
+        try {
+            return motor.getVelocity();
+        } catch (Exception e) {
+            return 0.0;
+        }
+    }
+
+    private static void setPowerSafe(@Nullable DcMotorEx motor, double power) {
+        if (motor == null) {
+            return;
+        }
+        try {
+            motor.setPower(power);
+        } catch (Exception ignored) {
         }
     }
 }

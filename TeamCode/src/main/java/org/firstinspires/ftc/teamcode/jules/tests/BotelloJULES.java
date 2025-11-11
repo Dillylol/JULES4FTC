@@ -18,7 +18,7 @@ import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
 public class BotelloJULES extends OpMode {
 
     private DcMotor BackL, BackR, FrontL, FrontR;
-    private DcMotorEx Intake, Wheel;
+    private DcMotorEx Intake, Wheel, Wheel2;
     private IMU imu;
 
     // This will hold the JulesBuilder instance for this OpMode
@@ -34,12 +34,17 @@ public class BotelloJULES extends OpMode {
         FrontR = hardwareMap.get(DcMotor.class,   "FrontR");
         Intake = hardwareMap.get(DcMotorEx.class, "Intake");
         Wheel  = hardwareMap.get(DcMotorEx.class, "Wheel");
+        Wheel2 = hardwareMap.get(DcMotorEx.class, "Wheel2");
         FrontL.setDirection(DcMotor.Direction.REVERSE);
         BackL.setDirection(DcMotor.Direction.REVERSE);
         FrontR.setDirection(DcMotor.Direction.REVERSE);
         BackR.setDirection(DcMotor.Direction.REVERSE);
         Intake.setDirection(DcMotorSimple.Direction.REVERSE);
         Wheel.setDirection(DcMotorSimple.Direction.REVERSE);
+        Wheel2.setDirection(DcMotorSimple.Direction.REVERSE);
+        Intake.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        Wheel.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        Wheel2.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         imu = hardwareMap.get(IMU.class, "imu");
         imu.initialize(new IMU.Parameters(new RevHubOrientationOnRobot(
                 RevHubOrientationOnRobot.LogoFacingDirection.RIGHT,
@@ -81,6 +86,7 @@ public class BotelloJULES extends OpMode {
                     .addData("heading_deg", Math.toDegrees(botHeading))
                     .addData("intake_power", Intake.getPower())
                     .addData("wheel_power", Wheel.getPower())
+                    .addData("wheel2_power", Wheel2 != null ? Wheel2.getPower() : 0.0)
                     .addData("battery_V", getBatteryVoltage())
                     .addData("fl_power", FrontL.getPower())
                     .addData("fr_power", FrontR.getPower())
