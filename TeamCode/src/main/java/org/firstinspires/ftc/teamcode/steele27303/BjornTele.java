@@ -323,7 +323,12 @@ public class BjornTele extends OpMode {
         return (n % 2 == 1) ? b[n/2] : 0.5*(b[n/2 - 1] + b[n/2]);
     }
 
-    private static double safeVel(DcMotorEx m) { try { return m.getVelocity(); } catch (Exception e) { return 0.0; } }
+    private static double safeVel(DcMotorEx m) {
+        if (m == null) {
+            return 0.0;
+        }
+        try { return m.getVelocity(); } catch (Exception e) { return 0.0; }
+    }
 
     private static double toRPM(double tps, double tpr) { return (tpr <= 0) ? 0.0 : (tps / tpr) * 60.0; }
 

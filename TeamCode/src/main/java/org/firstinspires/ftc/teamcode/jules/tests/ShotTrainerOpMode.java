@@ -89,6 +89,7 @@ public final class ShotTrainerOpMode extends LinearOpMode {
     public void runOpMode() {
         BjornHardware hardware = BjornHardware.forAutonomous(hardwareMap);
         DcMotorEx wheel = hardware.wheel;
+        DcMotorEx wheel2 = hardware.wheel2;
         DcMotorEx intake = hardware.intake;
         Servo lift = hardware.lift;
         voltageSensor = hardwareMap.voltageSensor.iterator().hasNext()
@@ -113,7 +114,7 @@ public final class ShotTrainerOpMode extends LinearOpMode {
                 MIN_RANGE_IN,
                 MAX_RANGE_IN);
 
-        shooter = new ShooterController(wheel, intake, lift);
+        shooter = new ShooterController(wheel, wheel2, intake, lift);
         rpmProvider = new RpmProvider();
 
         JulesBridgeManager.getInstance().prepare(hardwareMap.appContext);
