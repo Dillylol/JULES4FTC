@@ -44,15 +44,15 @@ public final class ShotTrainerOpMode extends LinearOpMode {
 
     private static final String TAG = "ShotTrainerOpMode";
 
-    private static final double MIN_RANGE_IN = 28.0;
-    private static final double MAX_RANGE_IN = 68.0;
+    private static final double MIN_RANGE_IN = 15.0;
+    private static final double MAX_RANGE_IN = 64.0;
     private static final double INITIAL_RANGE_IN = 36.0;
     private static final double AIM_TOLERANCE_DEG = 6.0;
     private static final double RANGE_TOL_IN = 0.75;
     private static final long OBS_INTERVAL_MS = 80L;
     private static final long PLAN_REQUEST_INTERVAL_MS = 200L;
     private static final int WARMUP_SHOTS = 2;
-    private static final double BATTERY_ABORT_V = 11.0;
+    private static final double BATTERY_ABORT_V = 9.0;
 
     private VoltageSensor voltageSensor;
     private ShooterController shooter;
