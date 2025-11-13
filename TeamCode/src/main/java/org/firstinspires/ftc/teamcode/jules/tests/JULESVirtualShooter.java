@@ -28,6 +28,7 @@ import org.firstinspires.ftc.teamcode.jules.bridge.JulesCommand;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesStreamBus;
 import org.firstinspires.ftc.teamcode.jules.bridge.util.GsonCompat;
 import org.firstinspires.ftc.teamcode.jules.shot.ShooterController;
+import org.firstinspires.ftc.teamcode.jules.telemetry.JulesDataOrganizer;
 
 import java.lang.reflect.Method;
 import java.util.Locale;
@@ -67,6 +68,12 @@ public final class JULESVirtualShooter extends OpMode {
     private final ElapsedTime loopTimer = new ElapsedTime();
     private double lastSnapshotMs = 0;
     private double lastHeartbeatMs = 0;
+    private final JulesDataOrganizer dataOrganizer = JulesDataOrganizer.getInstance();
+    private static final double BATTERY_MAX_V = 13.2;
+    private static final double BATTERY_MIN_V = 10.9;
+    private static final double BATTERY_LOAD_SAG_PER_SEC = 0.16;
+    private static final double BATTERY_RECOVERY_PER_SEC = 0.05;
+    private double batteryVoltage = 12.6;
 
     private int manualTargetRpm = 2400;
     private boolean spinRequested = false;
@@ -131,6 +138,7 @@ public final class JULESVirtualShooter extends OpMode {
         telemetry.addData("bridge", bridgeManager != null ? "connected" : "offline");
         telemetry.update();
         loopTimer.reset();
+        dataOrganizer.updateBatteryOverride(batteryVoltage);
     }
 
     @Override
@@ -202,6 +210,7 @@ public final class JULESVirtualShooter extends OpMode {
         wheel2.update(dt);
         intake.update(dt);
         lift.update();
+        updateBatteryModel(dt, shouldSpin || shooter.isUnderLoad());
 
         if (nowMs - lastHeartbeatMs >= 1000.0) {
             publishHeartbeat();
@@ -242,6 +251,7 @@ public final class JULESVirtualShooter extends OpMode {
             busPump.interrupt();
             busPump = null;
         }
+        dataOrganizer.clearBatteryOverride();
     }
 
     // ---------------------------------------------------------------------
@@ -411,7 +421,7 @@ public final class JULESVirtualShooter extends OpMode {
         hb.addProperty("ts_ms", System.currentTimeMillis());
         hb.addProperty("uptime_ms", (long) loopTimer.milliseconds());
         hb.addProperty("active_opmode", "JULES Virtual Shooter");
-        hb.addProperty("battery_v", 12.2);
+        hb.addProperty("battery_v", batteryVoltage);
         hb.addProperty("port", bridgePort);
         busPublish(hb.toString());
     }
@@ -420,6 +430,7 @@ public final class JULESVirtualShooter extends OpMode {
         JsonObject snap = new JsonObject();
         snap.addProperty("type", "snapshot");
         snap.addProperty("ts_ms", System.currentTimeMillis());
+        snap.addProperty("battery_v", batteryVoltage);
 
         JsonObject motors = new JsonObject();
         motors.add(wheel.name, wheel.toJson());
@@ -434,6 +445,7 @@ public final class JULESVirtualShooter extends OpMode {
         sim.addProperty("ready", shooter.isReady((long) loopTimer.milliseconds()));
         sim.addProperty("locked_out", shooter.isLockedOut((long) loopTimer.milliseconds()));
         sim.addProperty("spin_requested", spinRequested);
+        sim.addProperty("battery_v", batteryVoltage);
 
         if (lastShotMetrics != null) {
             JsonObject shot = new JsonObject();
@@ -456,6 +468,24 @@ public final class JULESVirtualShooter extends OpMode {
         ev.addProperty("ready_latency_ms", metrics.timeToReadyMs);
         ev.addProperty("fire_command_ms", metrics.fireTimestampMs);
         busPublish(ev.toString());
+    }
+
+    private void updateBatteryModel(double dt, boolean underLoad) {
+        double load = Math.abs(wheel.getPower()) + Math.abs(wheel2.getPower()) + Math.abs(intake.getPower());
+        if (underLoad) {
+            load += 1.2; // approximate flywheel surge
+        }
+        double drop = load * BATTERY_LOAD_SAG_PER_SEC * dt;
+        if (drop > 0) {
+            batteryVoltage = Math.max(BATTERY_MIN_V, batteryVoltage - drop);
+        }
+        if (!underLoad && load < 0.35) {
+            double recover = (0.35 - load) * BATTERY_RECOVERY_PER_SEC * dt;
+            if (recover > 0) {
+                batteryVoltage = Math.min(BATTERY_MAX_V, batteryVoltage + recover);
+            }
+        }
+        dataOrganizer.updateBatteryOverride(batteryVoltage);
     }
 
     private void publishCmdStatus(String name, String status, JsonObject args) {
