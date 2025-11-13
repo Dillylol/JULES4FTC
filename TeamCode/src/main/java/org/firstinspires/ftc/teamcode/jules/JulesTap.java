@@ -9,35 +9,55 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngularVelocity;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 import com.pedropathing.follower.Follower; // For odometry pose
 
+import org.firstinspires.ftc.teamcode.jules.telemetry.JulesDataOrganizer;
+
 import java.util.List;
+import java.util.ArrayList;
 
 public class JulesTap {
     private final ElapsedTime clock = new ElapsedTime();
     private final DcMotorEx[] motors;
-    private final VoltageSensor vs;
+    private final VoltageSensor[] voltageSensors;
     private final double ticksPerRev;
 
     // These are no longer final so they can be updated live
     private double wheelDiameterIn;
     private double gearRatio;
 
+    private final JulesDataOrganizer dataOrganizer = JulesDataOrganizer.getInstance();
+
     private volatile double lastCmd = 0.0;
 
     // --- Main Constructor ---
     public JulesTap(double ticksPerRev, double wheelDiameterIn, double gearRatio,
                     VoltageSensor battery, DcMotorEx... sampleMotors) {
-        this.ticksPerRev = ticksPerRev;
-        this.vs = battery;
-        this.motors = sampleMotors;
-        // Set the initial values using our new updatable method
-        updateConstants(wheelDiameterIn, gearRatio);
-        clock.reset();
+        this(ticksPerRev, wheelDiameterIn, gearRatio,
+                battery != null ? new VoltageSensor[]{battery} : new VoltageSensor[0],
+                sampleMotors);
     }
 
-    // --- Constructor overload to accept a List of motors ---
     public JulesTap(double ticksPerRev, double wheelDiameterIn, double gearRatio,
                     VoltageSensor battery, List<DcMotorEx> sampleMotors) {
         this(ticksPerRev, wheelDiameterIn, gearRatio, battery, sampleMotors.toArray(new DcMotorEx[0]));
+    }
+
+    public JulesTap(double ticksPerRev, double wheelDiameterIn, double gearRatio,
+                    Iterable<VoltageSensor> batteries, DcMotorEx... sampleMotors) {
+        this(ticksPerRev, wheelDiameterIn, gearRatio, toArray(batteries), sampleMotors);
+    }
+
+    public JulesTap(double ticksPerRev, double wheelDiameterIn, double gearRatio,
+                    Iterable<VoltageSensor> batteries, List<DcMotorEx> sampleMotors) {
+        this(ticksPerRev, wheelDiameterIn, gearRatio, batteries, sampleMotors.toArray(new DcMotorEx[0]));
+    }
+
+    private JulesTap(double ticksPerRev, double wheelDiameterIn, double gearRatio,
+                     VoltageSensor[] batteries, DcMotorEx... sampleMotors) {
+        this.ticksPerRev = ticksPerRev;
+        this.voltageSensors = batteries != null ? batteries : new VoltageSensor[0];
+        this.motors = sampleMotors;
+        updateConstants(wheelDiameterIn, gearRatio);
+        clock.reset();
     }
 
     /**
@@ -64,7 +84,9 @@ public class JulesTap {
         m.t = clock.seconds();
         m.cmdPower = lastCmd;
         m.velIPS = encodersToIPS();
-        m.batteryV = safeVoltage();
+        double battery = safeVoltage();
+        m.batteryV = Double.isFinite(battery) ? battery : m.batteryV;
+        reportBatteryVoltage(battery);
 
         // --- NEW: Add Full Odometry and IMU Data ---
         if (follower != null) {
@@ -93,7 +115,9 @@ public class JulesTap {
         m.cmdPower   = lastCmd;
         m.velIPS     = encodersToIPS();
         m.headingDeg = headingDeg;
-        m.batteryV   = safeVoltage();
+        double battery = safeVoltage();
+        m.batteryV   = Double.isFinite(battery) ? battery : m.batteryV;
+        reportBatteryVoltage(battery);
         return m;
     }
 
@@ -111,8 +135,46 @@ public class JulesTap {
     }
 
     private double safeVoltage() {
-        try { return vs.getVoltage(); } catch (Exception e) { return 12.0; }
+        double best = Double.NaN;
+        for (VoltageSensor sensor : voltageSensors) {
+            if (sensor == null) {
+                continue;
+            }
+            try {
+                double reading = sensor.getVoltage();
+                if (Double.isFinite(reading)) {
+                    if (Double.isNaN(best) || reading > best) {
+                        best = reading;
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return Double.isNaN(best) ? 12.0 : best;
     }
 
     private static double clamp(double v, double lo, double hi){ return Math.max(lo, Math.min(hi, v)); }
+
+    private void reportBatteryVoltage(double voltage) {
+        if (!Double.isFinite(voltage)) {
+            return;
+        }
+        try {
+            dataOrganizer.updateBatteryOverride(voltage);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static VoltageSensor[] toArray(Iterable<VoltageSensor> sensors) {
+        if (sensors == null) {
+            return new VoltageSensor[0];
+        }
+        List<VoltageSensor> list = new ArrayList<>();
+        for (VoltageSensor sensor : sensors) {
+            if (sensor != null) {
+                list.add(sensor);
+            }
+        }
+        return list.toArray(new VoltageSensor[0]);
+    }
 }

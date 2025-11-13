@@ -12,6 +12,7 @@ import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesCommand;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesStreamBus;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -42,7 +43,6 @@ public class JulesDevController extends LinearOpMode {
 
     // Optional sensors for metrics (kept but not required)
     private IMU imu;
-    private VoltageSensor vs;
     private JulesTap tap; // used only for simple power sampling; safe to keep
 
     @Override
@@ -191,9 +191,18 @@ public class JulesDevController extends LinearOpMode {
 
         // Optional sensors if you still want to sample power/battery later
         try { imu = hardwareMap.get(IMU.class, "imu"); } catch (Exception ignored) {}
-        try { vs = hardwareMap.voltageSensor.iterator().next(); } catch (Exception ignored) {}
+        List<VoltageSensor> voltageSensors = new ArrayList<>();
+        try {
+            for (VoltageSensor sensor : hardwareMap.voltageSensor) {
+                if (sensor != null) {
+                    voltageSensors.add(sensor);
+                }
+            }
+        } catch (Exception ignored) {}
 
         List<DcMotorEx> motors = Arrays.asList(lf, rf, lr, rr);
-        tap = new JulesTap(537.7, /*TPR example*/ 3.78, /*wheel D in*/ 1.0, /*gear*/ vs, motors);
+        tap = voltageSensors.isEmpty()
+                ? new JulesTap(537.7, /*TPR example*/ 3.78, /*wheel D in*/ 1.0, (VoltageSensor) null, motors)
+                : new JulesTap(537.7, /*TPR example*/ 3.78, /*wheel D in*/ 1.0, voltageSensors, motors);
     }
 }

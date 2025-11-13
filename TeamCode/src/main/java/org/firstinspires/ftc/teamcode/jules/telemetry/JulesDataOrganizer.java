@@ -38,6 +38,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Aggregates hardware, gamepad, and telemetry data into JSON snapshots.
@@ -71,6 +72,8 @@ public class JulesDataOrganizer {
 
     private final ConcurrentHashMap<String, String> telemetryCustom = new ConcurrentHashMap<>();
 
+    private static final long BATTERY_OVERRIDE_STALE_MS = 2000L;
+
     private final AtomicLong sequence = new AtomicLong();
 
     private HardwareMap hardwareMap;
@@ -84,6 +87,7 @@ public class JulesDataOrganizer {
 
     private JsonObject latestSnapshotData = new JsonObject();
     private JsonObject latestSnapshotMessage = null;
+    private final AtomicReference<BatterySample> batteryOverride = new AtomicReference<>(BatterySample.EMPTY);
 
     private JulesDataOrganizer() {
     }
@@ -230,6 +234,9 @@ public class JulesDataOrganizer {
     public void setOpModeState(OpModeState state) {
         synchronized (lock) {
             opModeState = state;
+            if (state == OpModeState.STOPPED) {
+                batteryOverride.set(BatterySample.EMPTY);
+            }
         }
     }
 
@@ -283,6 +290,17 @@ public class JulesDataOrganizer {
             latestSnapshotMessage = GsonCompat.deepCopy(snapshot);
         }
         return snapshot;
+    }
+
+    public void updateBatteryOverride(double voltage) {
+        if (!Double.isFinite(voltage)) {
+            return;
+        }
+        batteryOverride.set(new BatterySample(round3(voltage), System.currentTimeMillis()));
+    }
+
+    public void clearBatteryOverride() {
+        batteryOverride.set(BatterySample.EMPTY);
     }
 
     public JsonObject buildDiffSince(JsonObject lastData) {
@@ -586,6 +604,11 @@ public class JulesDataOrganizer {
 
     private double getBatteryVoltage() {
         double best = Double.NaN;
+        BatterySample override = batteryOverride.get();
+        long now = System.currentTimeMillis();
+        if (override.isFresh(now)) {
+            best = override.voltage;
+        }
         for (VoltageSensor sensor : voltageSensors) {
             try {
                 double voltage = sensor.getVoltage();
@@ -595,6 +618,9 @@ public class JulesDataOrganizer {
                     }
                 }
             } catch (Exception ignored) { }
+        }
+        if (Double.isNaN(best) && Double.isFinite(override.voltage)) {
+            best = override.voltage;
         }
         return best;
     }
@@ -621,6 +647,22 @@ public class JulesDataOrganizer {
     public JsonObject getLatestSnapshotMessage() {
         synchronized (lock) {
             return latestSnapshotMessage == null ? null : GsonCompat.deepCopy(latestSnapshotMessage);
+        }
+    }
+
+    private static final class BatterySample {
+        static final BatterySample EMPTY = new BatterySample(Double.NaN, Long.MIN_VALUE);
+
+        final double voltage;
+        final long timestampMs;
+
+        BatterySample(double voltage, long timestampMs) {
+            this.voltage = voltage;
+            this.timestampMs = timestampMs;
+        }
+
+        boolean isFresh(long nowMs) {
+            return Double.isFinite(voltage) && (nowMs - timestampMs) <= BATTERY_OVERRIDE_STALE_MS;
         }
     }
 }

@@ -12,6 +12,7 @@ import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesStreamBus;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesCommand;
 import org.firstinspires.ftc.teamcode.jules.bridge.util.GsonCompat;
+import org.firstinspires.ftc.teamcode.jules.telemetry.JulesDataOrganizer;
 
 // Optional Panels libs (we guard usage via reflection-compatible calls)
 import com.bylazar.telemetry.PanelsTelemetry;
@@ -39,6 +40,7 @@ public class JULESSimDrive extends OpMode {
     private JulesBridgeManager bridgeManager;
     private JulesStreamBus streamBus;
     private int bridgePort = 58080; // for telemetry only
+    private final JulesDataOrganizer dataOrganizer = JulesDataOrganizer.getInstance();
 
     // Optional bus subscription fallback
     private JulesStreamBus.Subscription busSub;
@@ -50,6 +52,12 @@ public class JULESSimDrive extends OpMode {
     private final VirtualMotor rf = new VirtualMotor("rf");
     private final VirtualMotor lr = new VirtualMotor("lr");
     private final VirtualMotor rr = new VirtualMotor("rr");
+
+    private static final double BATTERY_MAX_V = 13.2;
+    private static final double BATTERY_MIN_V = 10.8;
+    private static final double BATTERY_LOAD_SAG_PER_SEC = 0.08;
+    private static final double BATTERY_RECOVERY_PER_SEC = 0.03;
+    private double batteryVoltage = 12.6;
 
     private double xIn = 0, yIn = 0, headingDeg = 0; // toy pose
 
@@ -144,6 +152,7 @@ public class JULESSimDrive extends OpMode {
         }
         telemetry.update();
         loopTimer.reset();
+        dataOrganizer.updateBatteryOverride(batteryVoltage);
     }
 
     @Override public void start() { publishHeartbeat(); publishSnapshot(); }
@@ -177,6 +186,7 @@ public class JULESSimDrive extends OpMode {
 
         // 3) Motor dynamics
         lf.update(dt); rf.update(dt); lr.update(dt); rr.update(dt);
+        updateBatteryModel(dt);
 
         // 4) Toy kinematics
         stepKinematics(dt);
@@ -208,6 +218,7 @@ public class JULESSimDrive extends OpMode {
 
     @Override
     public void stop() {
+        dataOrganizer.clearBatteryOverride();
         try { if (busSub != null) { busSub.close(); busSub = null; } } catch (Throwable ignored) {}
         try { if (busPump != null) { busPump.interrupt(); busPump = null; } } catch (Throwable ignored) {}
     }
@@ -414,6 +425,21 @@ public class JULESSimDrive extends OpMode {
         while (headingDeg > 180) headingDeg -= 360; while (headingDeg < -180) headingDeg += 360;
     }
 
+    private void updateBatteryModel(double dt) {
+        double load = Math.abs(lf.power) + Math.abs(rf.power) + Math.abs(lr.power) + Math.abs(rr.power);
+        double drop = load * BATTERY_LOAD_SAG_PER_SEC * dt;
+        if (drop > 0) {
+            batteryVoltage = Math.max(BATTERY_MIN_V, batteryVoltage - drop);
+        }
+        if (load < 0.25) {
+            double recover = (0.25 - load) * BATTERY_RECOVERY_PER_SEC * dt;
+            if (recover > 0) {
+                batteryVoltage = Math.min(BATTERY_MAX_V, batteryVoltage + recover);
+            }
+        }
+        dataOrganizer.updateBatteryOverride(batteryVoltage);
+    }
+
     // ------------------------------------------------------------
     // Publishing
     // ------------------------------------------------------------
@@ -423,7 +449,7 @@ public class JULESSimDrive extends OpMode {
         hb.addProperty("ts_ms", System.currentTimeMillis());
         hb.addProperty("uptime_ms", (long) loopTimer.milliseconds());
         hb.addProperty("active_opmode", "JULES SimDrive v3");
-        hb.addProperty("battery_v", 12.5);
+        hb.addProperty("battery_v", batteryVoltage);
         hb.addProperty("port", bridgePort);
         busPublish(hb.toString());
     }
@@ -432,6 +458,7 @@ public class JULESSimDrive extends OpMode {
         JsonObject snap = new JsonObject();
         snap.addProperty("type", "snapshot");
         snap.addProperty("ts_ms", System.currentTimeMillis());
+        snap.addProperty("battery_v", batteryVoltage);
 
         JsonObject motors = new JsonObject();
         motors.add("lf", lf.toJson());
@@ -448,6 +475,7 @@ public class JULESSimDrive extends OpMode {
         sim.add("motors", motors);
         sim.add("pose", pose);
         sim.addProperty("manual_mode", manualMode);
+        sim.addProperty("battery_v", batteryVoltage);
 
         snap.add("sim", sim);
         busPublish(snap.toString());

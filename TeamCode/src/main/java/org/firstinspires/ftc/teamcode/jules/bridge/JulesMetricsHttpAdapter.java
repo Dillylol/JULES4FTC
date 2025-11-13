@@ -17,21 +17,21 @@ public class JulesMetricsHttpAdapter {
         long tsMillis = (long) Math.round(tsSeconds * 1000.0);
 
         StringBuilder sb = new StringBuilder(256);
-        sb.append("{\"type\":\"metrics\"")
-                .append(",\"ts_s\":").append(tsSeconds)
-                .append(",\"ts_ms\":").append(tsMillis)
-                .append(",\"cmd\":").append(m.cmdPower)
-                .append(",\"vel_ips\":").append(m.velIPS)
-                .append(",\"battery_v\":").append(m.batteryV)
-                .append(",\"x\":").append(m.x)
-                .append(",\"y\":").append(m.y)
-                .append(",\"heading\":").append(m.heading)
-                .append(",\"heading_deg\":").append(m.headingDeg)
-                .append(",\"pitch\":").append(m.pitch)
-                .append(",\"roll\":").append(m.roll)
-                .append(",\"yawRate\":").append(m.yawRate)
-                .append(",\"pitchRate\":").append(m.pitchRate)
-                .append(",\"rollRate\":").append(m.rollRate);
+        sb.append("{\"type\":\"metrics\"");
+        appendNumber(sb, "ts_s", tsSeconds);
+        sb.append(",\"ts_ms\":").append(tsMillis);
+        appendNumber(sb, "cmd", m.cmdPower);
+        appendNumber(sb, "vel_ips", m.velIPS);
+        appendNumber(sb, "battery_v", m.batteryV);
+        appendNumber(sb, "x", m.x);
+        appendNumber(sb, "y", m.y);
+        appendNumber(sb, "heading", m.heading);
+        appendNumber(sb, "heading_deg", m.headingDeg);
+        appendNumber(sb, "pitch", m.pitch);
+        appendNumber(sb, "roll", m.roll);
+        appendNumber(sb, "yawRate", m.yawRate);
+        appendNumber(sb, "pitchRate", m.pitchRate);
+        appendNumber(sb, "rollRate", m.rollRate);
 
         // --- CORRECTED SECTION ---
         // If a label exists, escape special characters and add it to the JSON.
@@ -46,5 +46,14 @@ public class JulesMetricsHttpAdapter {
 
         sb.append("}");
         return sb.toString();
+    }
+
+    private static void appendNumber(StringBuilder sb, String key, double value) {
+        sb.append(",\"").append(key).append("\":");
+        if (Double.isFinite(value)) {
+            sb.append(value);
+        } else {
+            sb.append("null");
+        }
     }
 }
