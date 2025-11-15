@@ -1,457 +1,417 @@
 package org.firstinspires.ftc.teamcode.jules.tests;
 
-import static java.lang.Math.abs;
-
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
-import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
-import com.qualcomm.robotcore.hardware.DcMotorEx;
-import com.qualcomm.robotcore.hardware.Servo;
+import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
-import com.qualcomm.robotcore.util.ElapsedTime;
 import com.qualcomm.robotcore.util.RobotLog;
 
 import com.pedropathing.follower.Follower;
+import com.pedropathing.geometry.BezierLine;
 import com.pedropathing.geometry.Pose;
+import com.pedropathing.paths.PathChain;
 
 import org.firstinspires.ftc.teamcode.common.BjornHardware;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
-import org.firstinspires.ftc.teamcode.jules.bridge.util.GsonCompat;
-import org.firstinspires.ftc.teamcode.jules.shot.MailboxConsumer;
-import org.firstinspires.ftc.teamcode.jules.shot.PedroShotNavigator;
-import org.firstinspires.ftc.teamcode.jules.shot.RpmProvider;
+import org.firstinspires.ftc.teamcode.jules.bridge.JulesStreamBus;
 import org.firstinspires.ftc.teamcode.jules.shot.ShooterController;
-import org.firstinspires.ftc.teamcode.jules.shot.ShotPlan;
-import org.firstinspires.ftc.teamcode.jules.shot.ShotPlannerBridge;
 import org.firstinspires.ftc.teamcode.jules.shot.ShotTrainerSettings;
 import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Iterator;
 import java.util.Locale;
 
 /**
- * Integrated trainer OpMode that executes the request → spin → fire loop against the planner.
+ * Pedro-driven shot trainer that walks the robot through a set of ranges and reports shots on the
+ * primary JULES telemetry stream so the desktop RL client can score them.
  */
-@Autonomous(name = "JULES: Shot Planner", group = "JULES")
-public final class ShotTrainerOpMode extends LinearOpMode {
+@Autonomous(name = "JULES: Shot Trainer", group = "JULES")
+public final class ShotTrainerOpMode extends OpMode {
 
     private static final String TAG = "ShotTrainerOpMode";
 
-    private static final double MIN_RANGE_IN = 15.0;
+    // Distance band for training.
+    private static final double MIN_RANGE_IN = 10.0;
     private static final double MAX_RANGE_IN = 64.0;
-    private static final double INITIAL_RANGE_IN = 36.0;
-    private static final double AIM_TOLERANCE_DEG = 6.0;
-    private static final double RANGE_TOL_IN = 0.75;
-    private static final long OBS_INTERVAL_MS = 80L;
-    private static final long PLAN_REQUEST_INTERVAL_MS = 200L;
-    private static final int WARMUP_SHOTS = 2;
-    private static final double BATTERY_ABORT_V = 9.0;
+    private static final double STEP_IN = 4.0;
+    private static final double START_RANGE_IN = 25.0;
+
+    // Pedro tolerances for "at range".
+    private static final double RANGE_TOLERANCE_IN = 0.5;
+    private static final double HEADING_TOLERANCE_RAD = Math.toRadians(3.0);
+
+    // 0" = closest legal shooting line. Positive = away from goal.
+    private static final double TRAIN_HEADING_RAD = Math.toRadians(0.0);
+
+    private static final long WAIT_FOR_REWARD_MS = 1_500L;
 
     private VoltageSensor voltageSensor;
     private ShooterController shooter;
-    private PedroShotNavigator navigator;
-    private RpmProvider rpmProvider;
-    private ShotPlannerBridge bridge;
-    private MailboxConsumer mailbox;
+    private Follower drive;
+    private Pose basePoseNearGoal = new Pose(0.0, 0.0, TRAIN_HEADING_RAD);
+    private Pose pendingTargetPose;
 
-    private boolean warmupComplete = false;
-    private int warmupShotsRemaining = WARMUP_SHOTS;
-    private final List<Double> warmupBiasSamples = new ArrayList<>();
+    private JulesBridgeManager bridgeManager;
+    private JulesStreamBus streamBus;
 
-    private ShotPlan activePlan;
-    private boolean planShotTriggered = false;
-    private boolean waitingForCommand = true;
-    private double currentHeadingOffsetDeg = 0.0;
+    private double currentRangeIn = START_RANGE_IN;
+    private int rangeDirection = +1;
+    private double currentTargetRpm = 0.0;
+    private double currentBatteryV = 12.0;
 
-    private long lastObsSentMs = 0L;
-    private long lastPlanRequestMs = -PLAN_REQUEST_INTERVAL_MS;
-    private long sessionRuntimeZeroMs = 0L;
-    private long sessionEpochBaseMs = 0L;
+    private ShooterController.ShotMetrics lastShotMetrics;
+    private long lastShotTimestampMs;
+    private long shotSeq = 0L;
+    private String sessionId = newSessionId();
+    private String botId = "shot-trainer";
 
-    private boolean sessionAborted = false;
+    private TrainState state = TrainState.INIT_POSITION;
+    private long stateSinceMs = 0L;
 
-    private int lastModelVersion = -1;
-    private String lastPolicySummary = "";
-    private String lastShotTrialId = "none";
-    private Boolean lastShotHit = null;
-    private Long lastShotLatencyMs = null;
-
-    private String sessionId = "";
+    private enum TrainState {
+        INIT_POSITION,
+        DRIVING_TO_RANGE,
+        SPINNING_UP,
+        READY_TO_FIRE,
+        FIRING,
+        WAITING_REWARD,
+        ADVANCING_RANGE,
+        DONE
+    }
 
     @Override
-    public void runOpMode() {
+    public void init() {
+        telemetry.addLine("Initializing Pedro shot trainer...");
         BjornHardware hardware = BjornHardware.forAutonomous(hardwareMap);
-        DcMotorEx wheel = hardware.wheel;
-        DcMotorEx wheel2 = hardware.wheel2;
-        DcMotorEx intake = hardware.intake;
-        Servo lift = hardware.lift;
-        voltageSensor = hardwareMap.voltageSensor.iterator().hasNext()
-                ? hardwareMap.voltageSensor.iterator().next()
-                : null;
-
-        Follower follower = Constants.createFollower(hardwareMap);
-        Pose tagPose = new Pose(0, 0, Math.toRadians(0));
-        try {
-            double startX = tagPose.getX() - Math.cos(tagPose.getHeading()) * INITIAL_RANGE_IN;
-            double startY = tagPose.getY() - Math.sin(tagPose.getHeading()) * INITIAL_RANGE_IN;
-            follower.setStartingPose(new Pose(startX, startY, tagPose.getHeading()));
-        } catch (Exception ignored) {
-        }
-
-        navigator = new PedroShotNavigator(
-                follower,
-                tagPose,
-                AIM_TOLERANCE_DEG,
-                RANGE_TOL_IN,
-                INITIAL_RANGE_IN,
-                MIN_RANGE_IN,
-                MAX_RANGE_IN);
-
-        shooter = new ShooterController(wheel, wheel2, intake, lift);
-        rpmProvider = new RpmProvider();
-
-        JulesBridgeManager.getInstance().prepare(hardwareMap.appContext);
-
-        bridge = new ShotPlannerBridge(hardwareMap.appContext);
-        bridge.setBotId(ShotTrainerSettings.getBotId(hardwareMap.appContext));
-        bridge.connect();
-        mailbox = new MailboxConsumer(bridge, rpmProvider);
-
-        loadInitialModel();
-
-        telemetry.addLine("JULES Shot Planner ready. Press START.");
-        telemetry.update();
-
-        waitForStart();
-        if (isStopRequested()) {
-            bridge.close();
-            return;
-        }
-
-        ElapsedTime runtime = new ElapsedTime();
-        runtime.reset();
-        sessionRuntimeZeroMs = (long) runtime.milliseconds();
-        sessionEpochBaseMs = System.currentTimeMillis();
-        sessionId = String.format(Locale.US, "trainer-%d", sessionEpochBaseMs);
-        bridge.setSessionId(sessionId);
-        bridge.setSessionEpochMs(sessionEpochBaseMs);
-        bridge.sendHello(sessionId, sessionEpochBaseMs);
+        shooter = new ShooterController(hardware.wheel, hardware.wheel2, hardware.intake, hardware.lift);
+        voltageSensor = firstVoltageSensor();
 
         try {
-            mainLoop(runtime);
-        } finally {
-            shooter.stop((long) runtime.milliseconds());
-            bridge.close();
-        }
-    }
-
-    private void mainLoop(ElapsedTime runtime) {
-        while (opModeIsActive() && !isStopRequested() && !sessionAborted) {
-            long runtimeMs = (long) runtime.milliseconds();
-            long wallClockMs = toEpoch(runtimeMs);
-
-            ShotPlannerBridge.HelloAck ack;
-            while ((ack = mailbox.pollHelloAck()) != null) {
-                if (ack.modelVersion > 0) {
-                    lastModelVersion = ack.modelVersion;
-                }
-                if (ack.policy != null) {
-                    lastPolicySummary = ack.policy.toString();
-                }
-            }
-
-            ShotPlannerBridge.ShotResult shotResult;
-            while ((shotResult = mailbox.pollShotResult()) != null) {
-                lastShotTrialId = shotResult.trialId;
-                lastShotHit = shotResult.hit;
-                lastShotLatencyMs = shotResult.latencyMs >= 0 ? shotResult.latencyMs : null;
-            }
-
-            ShotPlan plan;
-            while ((plan = mailbox.poll(wallClockMs)) != null) {
-                handlePlan(plan, runtimeMs);
-            }
-
-            boolean manualOverride = isManualOverride();
-
-            navigator.update();
-            navigator.driveToTarget();
-
-            double rawVoltage = readVoltage();
-            double filteredVoltage = rpmProvider.updateAndGetLoadVoltage(runtimeMs, rawVoltage, shooter.isUnderLoad());
-            double rangeIn = navigator.getRangeIn();
-            double headingErrorDeg = navigator.getHeadingToTagDeg();
-
-            RpmProvider.Target target = rpmProvider.target(rangeIn, filteredVoltage);
-            double rpmModelBase = target.rpmTarget;
-            double rpmCommand = rpmModelBase;
-
-            if (warmupComplete) {
-                if (activePlan != null && System.currentTimeMillis() > activePlan.validUntilMs) {
-                    RobotLog.w(TAG, "Command %s expired before execution", activePlan.cmdId);
-                    activePlan = null;
-                    planShotTriggered = false;
-                    waitingForCommand = true;
-                }
-
-                if (activePlan != null) {
-                    if (activePlan.hasAbsoluteTarget()) {
-                        Double absolute = activePlan.getRpmTargetAbs();
-                        if (absolute != null) {
-                            rpmCommand = absolute;
-                        }
-                    } else {
-                        Double bias = activePlan.getRpmBias();
-                        if (bias != null) {
-                            rpmCommand = rpmModelBase + bias;
-                        }
-                    }
-                }
-            }
-
-            if (manualOverride || sessionAborted) {
-                shooter.stop(runtimeMs);
-            } else {
-                shooter.setTargetRpm(rpmCommand, runtimeMs);
-            }
-
-            shooter.update(runtimeMs);
-
-            ShotPlannerBridge.PoseSnapshot pose = navigator.getPoseSnapshot();
-            ShotPlannerBridge.ShotContext context = new ShotPlannerBridge.ShotContext(
-                    pose,
-                    rangeIn,
-                    filteredVoltage,
-                    shooter.getMeasuredRpm(),
-                    rpmModelBase,
-                    rpmCommand,
-                    headingErrorDeg,
-                    wallClockMs);
-
-            if (runtimeMs - lastObsSentMs >= OBS_INTERVAL_MS) {
-                bridge.sendObservation(context);
-                lastObsSentMs = runtimeMs;
-            }
-
-            if (!warmupComplete) {
-                runWarmup(runtimeMs, context, rpmModelBase, rpmCommand, pose);
-            } else {
-                executePlanLoop(runtimeMs, manualOverride, context, rpmCommand, pose);
-            }
-
-            updateTelemetry(runtimeMs, manualOverride, filteredVoltage, rpmModelBase, rpmCommand);
-            idle();
-        }
-    }
-
-    private void runWarmup(long runtimeMs,
-                           ShotPlannerBridge.ShotContext context,
-                           double rpmModelBase,
-                           double rpmCommand,
-                           ShotPlannerBridge.PoseSnapshot pose) {
-        if (warmupShotsRemaining <= 0) {
-            finalizeWarmup();
-            waitingForCommand = true;
-            return;
-        }
-
-        boolean aimed = navigator.isAimed();
-        boolean ready = shooter.isReady(runtimeMs);
-
-        if (aimed && ready && !shooter.isLockedOut(runtimeMs)) {
-            shooter.fire(runtimeMs);
-        }
-
-        ShooterController.ShotMetrics metrics = shooter.pollShotMetrics();
-        if (metrics != null) {
-            warmupShotsRemaining -= 1;
-            double biasSample = metrics.rpmAtFire - rpmModelBase;
-            warmupBiasSamples.add(biasSample);
-            String trialId = String.format(Locale.US, "warmup_%d", WARMUP_SHOTS - warmupShotsRemaining);
-            ShotPlannerBridge.ShotToken token = new ShotPlannerBridge.ShotToken(
-                    trialId,
-                    toEpoch(metrics.fireTimestampMs),
-                    context.rangeIn,
-                    context.vBattLoad,
-                    rpmCommand,
-                    metrics.rpmAtFire,
-                    metrics.timeToReadyMs,
-                    pose,
-                    context.headingToTagDeg);
-            bridge.sendShotToken(token);
-        }
-
-        if (warmupShotsRemaining <= 0) {
-            finalizeWarmup();
-            waitingForCommand = true;
-        }
-    }
-
-    private void finalizeWarmup() {
-        warmupComplete = true;
-        double biasSum = 0.0;
-        for (Double sample : warmupBiasSamples) {
-            biasSum += sample != null ? sample : 0.0;
-        }
-        double sessionBias = warmupBiasSamples.isEmpty() ? 0.0 : biasSum / warmupBiasSamples.size();
-        rpmProvider.setSessionBias(sessionBias);
-        warmupBiasSamples.clear();
-        RobotLog.ii(TAG, "Warmup complete; session bias %.2f", sessionBias);
-    }
-
-    private void executePlanLoop(long runtimeMs,
-                                 boolean manualOverride,
-                                 ShotPlannerBridge.ShotContext context,
-                                 double rpmCommand,
-                                 ShotPlannerBridge.PoseSnapshot pose) {
-        if (sessionAborted) {
-            return;
-        }
-
-        if (context.vBattLoad < BATTERY_ABORT_V) {
-            sessionAborted = true;
-            RobotLog.e(TAG, "Battery below floor %.2fV; aborting", context.vBattLoad);
-            shooter.stop(runtimeMs);
-            return;
-        }
-
-        if (waitingForCommand && runtimeMs - lastPlanRequestMs >= PLAN_REQUEST_INTERVAL_MS) {
-            bridge.sendRequestShotPlan(context);
-            lastPlanRequestMs = runtimeMs;
-        }
-
-        if (activePlan != null && !manualOverride) {
-            boolean aimed = navigator.isAimed();
-            boolean ready = shooter.isReady(runtimeMs);
-            boolean loiter = activePlan.loiter;
-
-            if (!loiter && aimed && ready && !planShotTriggered && !shooter.isLockedOut(runtimeMs)) {
-                if (shooter.fire(runtimeMs)) {
-                    planShotTriggered = true;
-                }
-            }
-        }
-
-        ShooterController.ShotMetrics metrics = shooter.pollShotMetrics();
-        if (metrics != null) {
-            String trialId = (activePlan != null) ? activePlan.trialId : String.format(Locale.US, "shot_%d", metrics.fireTimestampMs);
-            ShotPlannerBridge.ShotToken token = new ShotPlannerBridge.ShotToken(
-                    trialId,
-                    toEpoch(metrics.fireTimestampMs),
-                    context.rangeIn,
-                    context.vBattLoad,
-                    rpmCommand,
-                    metrics.rpmAtFire,
-                    metrics.timeToReadyMs,
-                    pose,
-                    context.headingToTagDeg);
-            bridge.sendShotToken(token);
-            planShotTriggered = false;
-            if (activePlan != null) {
-                waitingForCommand = true;
-                activePlan = null;
-            }
-        }
-    }
-
-    private void handlePlan(ShotPlan plan, long runtimeMs) {
-        if (!warmupComplete || plan == null) {
-            return;
-        }
-        navigator.applyRangeDelta(plan.rangeDeltaIn);
-        navigator.setHeadingOffsetDeg(plan.headingOffsetDeg);
-        currentHeadingOffsetDeg = plan.headingOffsetDeg;
-        activePlan = plan;
-        planShotTriggered = false;
-        waitingForCommand = plan.loiter;
-        if (waitingForCommand) {
-            lastPlanRequestMs = runtimeMs;
-        }
-    }
-
-    private void loadInitialModel() {
-        try {
-            InputStream stream = hardwareMap.appContext.getAssets().open("rpm_model.json");
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    sb.append(line);
-                }
-                JsonElement parsed = GsonCompat.parse(sb.toString());
-                if (parsed != null && parsed.isJsonObject()) {
-                    JsonObject obj = parsed.getAsJsonObject();
-                    rpmProvider.applyUpdate(obj);
-                    RobotLog.i(TAG, "Loaded default rpm_model.json");
-                }
-            }
+            drive = Constants.createFollower(hardwareMap);
         } catch (Exception e) {
-            RobotLog.w(TAG, "No default rpm_model.json found: %s", e.getMessage());
+            drive = null;
+            RobotLog.ee(TAG, "Pedro follower init failed: %s", e.getMessage());
         }
-    }
 
-    private void updateTelemetry(long runtimeMs,
-                                 boolean manualOverride,
-                                 double voltage,
-                                 double rpmBase,
-                                 double rpmCmd) {
-        telemetry.addData("state", warmupComplete ? (activePlan != null ? "plan" : (waitingForCommand ? "await_cmd" : "idle")) : "warmup");
-        telemetry.addData("manual", manualOverride);
-        telemetry.addData("connected", bridge.isConnected());
-        telemetry.addData("endpoint", bridge.getEndpoint());
+        botId = ShotTrainerSettings.getBotId(hardwareMap.appContext);
+        if (botId == null || botId.isEmpty()) {
+            botId = "shot-trainer";
+        }
+        bridgeManager = JulesBridgeManager.getInstance();
+        if (bridgeManager != null) {
+            bridgeManager.prepare(hardwareMap.appContext);
+            streamBus = bridgeManager.getStreamBus();
+        }
+
+        Pose startPose = poseForRange(START_RANGE_IN);
+        if (drive != null) {
+            try {
+                drive.setStartingPose(startPose);
+            } catch (Exception ignored) {
+            }
+        }
+        pendingTargetPose = startPose;
+        state = TrainState.INIT_POSITION;
+        stateSinceMs = System.currentTimeMillis();
         telemetry.addData("session", sessionId);
-        telemetry.addData("model_ver", lastModelVersion);
-        telemetry.addData("policy", lastPolicySummary);
-        telemetry.addData("rangeTarget", String.format(Locale.US, "%.1f", navigator.getRangeTarget()));
-        telemetry.addData("rangeIn", String.format(Locale.US, "%.1f", navigator.getRangeIn()));
-        telemetry.addData("headingOffset", String.format(Locale.US, "%.1f", currentHeadingOffsetDeg));
-        telemetry.addData("batteryV", String.format(Locale.US, "%.2f", voltage));
-        telemetry.addData("rpmBase", String.format(Locale.US, "%.0f", rpmBase));
-        telemetry.addData("rpmCmd", String.format(Locale.US, "%.0f", rpmCmd));
-        telemetry.addData("rpmMeas", String.format(Locale.US, "%.0f", shooter.getMeasuredRpm()));
-        telemetry.addData("ready", shooter.isReady(runtimeMs));
-        telemetry.addData("aimed", navigator.isAimed());
-        telemetry.addData("planId", activePlan != null ? activePlan.cmdId : "none");
-        telemetry.addData("loiter", activePlan != null && activePlan.loiter);
-        telemetry.addData("sessionBias", String.format(Locale.US, "%.1f", rpmProvider.getSessionBias()));
-        telemetry.addData("lastTrial", lastShotTrialId);
-        telemetry.addData("lastHit", lastShotHit != null ? lastShotHit : "?");
-        telemetry.addData("lastLatency", lastShotLatencyMs != null ? lastShotLatencyMs : "-");
+        telemetry.addLine("Shot trainer ready. Press START.");
         telemetry.update();
     }
 
-    private boolean isManualOverride() {
-        return abs(gamepad1.left_stick_x) > 0.15
-                || abs(gamepad1.left_stick_y) > 0.15
-                || abs(gamepad2.left_stick_x) > 0.15
-                || abs(gamepad2.left_stick_y) > 0.15
-                || gamepad1.right_trigger > 0.2
-                || gamepad2.right_trigger > 0.2;
+    @Override
+    public void start() {
+        sessionId = newSessionId();
+        shotSeq = 0L;
+        currentRangeIn = START_RANGE_IN;
+        rangeDirection = +1;
+        currentTargetRpm = 0.0;
+        lastShotMetrics = null;
+        lastShotTimestampMs = 0L;
+        state = TrainState.INIT_POSITION;
+        stateSinceMs = System.currentTimeMillis();
+        goToRange(currentRangeIn);
+    }
+
+    @Override
+    public void loop() {
+        long nowMs = System.currentTimeMillis();
+        if (drive != null) {
+            drive.update();
+        }
+        shooter.update(nowMs);
+        currentBatteryV = readVoltage();
+
+        Pose pose = drive != null ? drive.getPose() : null;
+        double measuredRange = measuredRangeIn(pose);
+        switch (state) {
+            case INIT_POSITION:
+            case DRIVING_TO_RANGE:
+                if (isAtTargetRange()) {
+                    currentTargetRpm = lookupRpmForRange(currentRangeIn);
+                    shooter.setTargetRpm(currentTargetRpm, nowMs);
+                    transitionTo(TrainState.SPINNING_UP, nowMs);
+                } else {
+                    transitionTo(TrainState.DRIVING_TO_RANGE, nowMs);
+                }
+                break;
+
+            case SPINNING_UP:
+                if (shooter.isReady(nowMs)) {
+                    transitionTo(TrainState.READY_TO_FIRE, nowMs);
+                }
+                break;
+
+            case READY_TO_FIRE:
+                if (shooter.fire(nowMs)) {
+                    publishCmdStatus("fire", "accepted", null);
+                    transitionTo(TrainState.FIRING, nowMs);
+                } else {
+                    publishCmdStatus("fire", "rejected", null);
+                }
+                break;
+
+            case FIRING: {
+                ShooterController.ShotMetrics metrics = shooter.pollShotMetrics();
+                if (metrics != null) {
+                    lastShotMetrics = metrics;
+                    lastShotTimestampMs = nowMs;
+                    publishShotEvent(metrics);
+                    transitionTo(TrainState.WAITING_REWARD, nowMs);
+                }
+                break;
+            }
+
+            case WAITING_REWARD:
+                if (nowMs - stateSinceMs >= WAIT_FOR_REWARD_MS) {
+                    shooter.stop(nowMs);
+                    currentTargetRpm = 0.0;
+                    transitionTo(TrainState.ADVANCING_RANGE, nowMs);
+                }
+                break;
+
+            case ADVANCING_RANGE:
+                goToRange(nextRangeIn());
+                transitionTo(TrainState.DRIVING_TO_RANGE, nowMs);
+                break;
+
+            case DONE:
+            default:
+                shooter.stop(nowMs);
+                break;
+        }
+
+        updateTelemetry(pose, nowMs, measuredRange);
+    }
+
+    @Override
+    public void stop() {
+        shooter.stop(System.currentTimeMillis());
+    }
+
+    private void goToRange(double rangeIn) {
+        currentRangeIn = clampRange(rangeIn);
+        pendingTargetPose = poseForRange(currentRangeIn);
+        if (drive == null || pendingTargetPose == null) {
+            return;
+        }
+        Pose start = drive.getPose();
+        if (start == null) {
+            start = pendingTargetPose;
+        }
+        try {
+            PathChain path = drive.pathBuilder()
+                    .addPath(new BezierLine(start, pendingTargetPose))
+                    .setLinearHeadingInterpolation(start.getHeading(), pendingTargetPose.getHeading())
+                    .build();
+            drive.followPath(path, true);
+        } catch (Exception e) {
+            RobotLog.ee(TAG, "Failed to build Pedro path: %s", e.getMessage());
+        }
+    }
+
+    private Pose poseForRange(double rangeIn) {
+        double targetX = basePoseNearGoal.getX() + rangeIn;
+        double targetY = basePoseNearGoal.getY();
+        return new Pose(targetX, targetY, TRAIN_HEADING_RAD);
+    }
+
+    private double nextRangeIn() {
+        double next = currentRangeIn + rangeDirection * STEP_IN;
+        if (next > MAX_RANGE_IN) {
+            next = MAX_RANGE_IN;
+            rangeDirection = -1;
+        } else if (next < MIN_RANGE_IN) {
+            next = MIN_RANGE_IN;
+            rangeDirection = +1;
+        }
+        currentRangeIn = next;
+        return currentRangeIn;
+    }
+
+    private void transitionTo(TrainState newState, long nowMs) {
+        if (state != newState) {
+            state = newState;
+            stateSinceMs = nowMs;
+        }
+    }
+
+    private boolean isAtTargetRange() {
+        if (drive == null) {
+            return true;
+        }
+        Pose pose = drive.getPose();
+        Pose target = pendingTargetPose != null ? pendingTargetPose : poseForRange(currentRangeIn);
+        if (pose == null || target == null) {
+            return false;
+        }
+        double dx = target.getX() - pose.getX();
+        double dy = target.getY() - pose.getY();
+        double posError = Math.hypot(dx, dy);
+        double headingError = Math.abs(angleWrap(pose.getHeading() - TRAIN_HEADING_RAD));
+        boolean settled = !drive.isBusy();
+        return posError <= RANGE_TOLERANCE_IN && headingError <= HEADING_TOLERANCE_RAD && settled;
+    }
+
+    private double lookupRpmForRange(double rangeIn) {
+        // TODO: Replace with a learned model or interpolation map provided by the client.
+        double linear = 2100.0 + (rangeIn * 8.0);
+        return Math.max(1800.0, Math.min(3000.0, linear));
+    }
+
+    private double clampRange(double rangeIn) {
+        return Math.max(MIN_RANGE_IN, Math.min(MAX_RANGE_IN, rangeIn));
+    }
+
+    private double measuredRangeIn() {
+        Pose pose = drive != null ? drive.getPose() : null;
+        return measuredRangeIn(pose);
+    }
+
+    private double measuredRangeIn(Pose pose) {
+        if (pose == null) {
+            return currentRangeIn;
+        }
+        return pose.getX() - basePoseNearGoal.getX();
+    }
+
+    private double angleWrap(double angleRad) {
+        double wrapped = angleRad;
+        while (wrapped > Math.PI) {
+            wrapped -= 2.0 * Math.PI;
+        }
+        while (wrapped < -Math.PI) {
+            wrapped += 2.0 * Math.PI;
+        }
+        return wrapped;
+    }
+
+    private VoltageSensor firstVoltageSensor() {
+        Iterator<VoltageSensor> it = hardwareMap.voltageSensor.iterator();
+        return it.hasNext() ? it.next() : null;
     }
 
     private double readVoltage() {
         if (voltageSensor == null) {
-            return 12.0;
+            return currentBatteryV;
         }
         try {
             double v = voltageSensor.getVoltage();
-            if (Double.isNaN(v) || v <= 0) {
-                return 12.0;
+            if (Double.isFinite(v) && v > 0) {
+                return v;
             }
-            return v;
-        } catch (Exception e) {
-            return 12.0;
+        } catch (Exception ignored) {
+        }
+        return currentBatteryV;
+    }
+
+    private void updateTelemetry(Pose pose, long nowMs, double measuredRange) {
+        telemetry.addData("state", state);
+        telemetry.addData("session", sessionId);
+        telemetry.addData("bot", botId);
+        telemetry.addData("range_in", String.format(Locale.US, "%.1f", currentRangeIn));
+        telemetry.addData("range_measured_in", String.format(Locale.US, "%.1f", measuredRange));
+        telemetry.addData("range_dir", rangeDirection > 0 ? "away" : "toward");
+        telemetry.addData("target_rpm", String.format(Locale.US, "%.0f", currentTargetRpm));
+        telemetry.addData("battery_v", String.format(Locale.US, "%.2f", currentBatteryV));
+        telemetry.addData("shooter_ready", shooter.isReady(nowMs));
+        if (pose != null) {
+            telemetry.addData("pose",
+                    String.format(Locale.US, "x=%.1f y=%.1f h=%.1f",
+                            pose.getX(),
+                            pose.getY(),
+                            Math.toDegrees(pose.getHeading())));
+        }
+        if (lastShotMetrics != null) {
+            telemetry.addData("last_shot_rpm", lastShotMetrics.rpmAtFire);
+            telemetry.addData("last_ready_latency_ms", lastShotMetrics.timeToReadyMs);
+            telemetry.addData("last_shot_ts", lastShotTimestampMs);
+        }
+        telemetry.update();
+    }
+
+    private String newSessionId() {
+        return String.format(Locale.US, "shot-%08x", System.currentTimeMillis() & 0xffffffffL);
+    }
+
+    private void publishShotEvent(ShooterController.ShotMetrics metrics) {
+        JsonObject ev = new JsonObject();
+        ev.addProperty("type", "shot");
+        ev.addProperty("ts_ms", System.currentTimeMillis());
+        long seq = ++shotSeq;
+        ev.addProperty("shot_id", sessionId + "-" + seq);
+        ev.addProperty("session_id", sessionId);
+        ev.addProperty("bot_id", botId);
+        ev.addProperty("battery_v", currentBatteryV);
+        double measuredRange = measuredRangeIn();
+        ev.addProperty("distance_in", measuredRange);
+        ev.addProperty("rpm_at_fire", metrics.rpmAtFire);
+        ev.addProperty("ready_latency_ms", metrics.timeToReadyMs);
+        ev.addProperty("fire_command_ms", metrics.fireTimestampMs);
+
+        JsonObject ctx = new JsonObject();
+        ctx.addProperty("target_rpm", currentTargetRpm);
+        ctx.addProperty("manual_target_rpm", currentTargetRpm);
+        ctx.addProperty("range_in", measuredRange);
+        ctx.addProperty("range_target_in", currentRangeIn);
+        ctx.addProperty("pose_heading_rad", TRAIN_HEADING_RAD);
+        ev.add("context", ctx);
+        busPublish(ev.toString());
+    }
+
+    private void publishCmdStatus(String name, String status, JsonObject args) {
+        JsonObject ev = new JsonObject();
+        ev.addProperty("type", "cmd_status");
+        ev.addProperty("name", name);
+        ev.addProperty("status", status);
+        ev.addProperty("ts_ms", System.currentTimeMillis());
+        if (args != null) {
+            ev.add("args", args);
+        }
+        busPublish(ev.toString());
+    }
+
+    private void busPublish(String json) {
+        if (json == null || json.isEmpty()) {
+            return;
+        }
+        JulesStreamBus bus = resolveStreamBus();
+        if (bus == null) {
+            return;
+        }
+        try {
+            bus.publishJsonLine(json);
+        } catch (Throwable ignored) {
         }
     }
 
-    private long toEpoch(long runtimeMs) {
-        return sessionEpochBaseMs + (runtimeMs - sessionRuntimeZeroMs);
+    private JulesStreamBus resolveStreamBus() {
+        if (bridgeManager != null) {
+            JulesStreamBus shared = bridgeManager.getStreamBus();
+            if (shared != null) {
+                streamBus = shared;
+            }
+        }
+        return streamBus;
     }
 }
