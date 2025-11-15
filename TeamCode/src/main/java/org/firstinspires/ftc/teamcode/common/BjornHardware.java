@@ -72,6 +72,7 @@ public final class BjornHardware {
         intake.setDirection(BjornConstants.Motors.INTAKE_DIRECTION);
         intake.setZeroPowerBehavior(BjornConstants.Motors.INTAKE_ZERO_POWER);
         wheel2.setDirection(BjornConstants.Motors.WHEEL2_DIRECTION);
+        wheel.setDirection(BjornConstants.Motors.WHEEL_DIRECTION);
     }
 
     public void resetWheelEncoder() {

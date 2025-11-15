@@ -25,9 +25,9 @@ public final class ShooterController {
     }
 
     private static final double TICKS_PER_REV = 28.0;
-    private static final double READY_TOL_RPM = 70.0;
+    private static final double READY_TOL_RPM = 80.0;
     private static final long READY_SETTLE_MS = 300L;
-    private static final double DIP_THRESHOLD_RPM = 150.0;
+    private static final double DIP_THRESHOLD_RPM = 50.0;
     private static final long DIP_WINDOW_MS = 220L;
     private static final long LOCKOUT_MS = 700L;
     private static final long LIFT_HOLD_MS = 350L;

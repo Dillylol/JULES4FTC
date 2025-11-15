@@ -13,7 +13,7 @@ import com.qualcomm.robotcore.hardware.PIDCoefficients;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.ServoController;
-import com.qualcomm.robotcore.hardware.configuration.MotorConfigurationType;
+import com.qualcomm.robotcore.hardware.configuration.typecontainers.MotorConfigurationType;
 import com.qualcomm.robotcore.hardware.PwmControl;
 import com.qualcomm.robotcore.hardware.PwmControl.PwmRange;
 import com.qualcomm.robotcore.util.ElapsedTime;
@@ -826,7 +826,7 @@ public final class JULESVirtualShooter extends OpMode {
     // ---------------------------------------------------------------------
     // Virtual servo implementation
     // ---------------------------------------------------------------------
-    private static final class VirtualServo implements Servo {
+    private static final class VirtualServo implements Servo, PwmControl {
         final String name;
         private Direction direction = Direction.FORWARD;
         private double position = BjornConstants.Servos.LIFT_LOWERED;

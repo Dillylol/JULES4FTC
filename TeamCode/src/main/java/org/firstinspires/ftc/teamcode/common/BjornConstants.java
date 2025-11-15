@@ -1,6 +1,7 @@
 package org.firstinspires.ftc.teamcode.common;
 
 import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.hardware.DcMotorSimple;
 
 /**
  * Central place for robot-wide hardware configuration constants.
@@ -32,7 +33,7 @@ public final class BjornConstants {
         public static final DcMotor.Direction INTAKE_DIRECTION = DcMotor.Direction.REVERSE;
         public static final DcMotor.ZeroPowerBehavior INTAKE_ZERO_POWER = DcMotor.ZeroPowerBehavior.BRAKE;
         public static final DcMotor.Direction WHEEL2_DIRECTION = DcMotor.Direction.REVERSE; // flip if needed
-
+        public static final DcMotor.Direction WHEEL_DIRECTION = DcMotor.Direction.REVERSE; // flip if needed
     }
 
     public static final class Servos {
