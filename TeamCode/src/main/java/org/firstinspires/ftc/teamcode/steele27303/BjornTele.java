@@ -39,7 +39,7 @@ public class BjornTele extends OpMode {
 
     // ToF distance sensor at the very front (matches your measurement reference)
     private DistanceSensor tofFront;
-
+    private VoltageSensor vSensor;
     // ===== Dual-Gamepad Redundancy =====
     private boolean g2DriveMaster = false; // when true, gamepad2 drives
     private boolean g1DpadLeftPrev = false; // edge detect for master toggle
@@ -115,6 +115,7 @@ public class BjornTele extends OpMode {
                 RevHubOrientationOnRobot.UsbFacingDirection.UP));
         imu.initialize(params);
 
+
         panels.addData("Status", "Init complete (DualPad redundancy ready)");
         panels.update();
     }
@@ -142,6 +143,7 @@ public class BjornTele extends OpMode {
 
         // Field-centric drive
         double heading = imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS);
+        double voltage = vSensor.getVoltage();
         double rotX = x * Math.cos(-heading) - y * Math.sin(-heading);
         double rotY = x * Math.sin(-heading) + y * Math.cos(-heading);
         double denom = Math.max(Math.abs(rotY) + Math.abs(rotX) + Math.abs(rx), 1.0);
@@ -283,7 +285,7 @@ public class BjornTele extends OpMode {
         telemetry.addData("Wheel2 RPM", "%.0f", wheel2Rpm);
         telemetry.addData("Wheel1 Pwr", "%.2f", Wheel.getPower());
         telemetry.addData("Wheel2 Pwr", "%.2f", Wheel2.getPower());
-        telemetry.addData("Battery V", "%.2f", v);
+        telemetry.addData("Battery V", "%.2f", voltage);
 
         telemetry.addLine("=== RANGE ===");
         telemetry.addData("Distance (ft)", (Double.isNaN(distFtDisplay) ? "—" : String.format("%.2f", distFtDisplay)));

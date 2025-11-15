@@ -13,6 +13,7 @@ import com.qualcomm.robotcore.hardware.PIDCoefficients;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.ServoController;
+import com.qualcomm.robotcore.hardware.VoltageSensor;
 import com.qualcomm.robotcore.hardware.configuration.typecontainers.MotorConfigurationType;
 import com.qualcomm.robotcore.hardware.PwmControl;
 import com.qualcomm.robotcore.hardware.PwmControl.PwmRange;
@@ -27,7 +28,9 @@ import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesCommand;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesStreamBus;
 import org.firstinspires.ftc.teamcode.jules.bridge.util.GsonCompat;
+import org.firstinspires.ftc.teamcode.jules.shot.MailboxConsumer;
 import org.firstinspires.ftc.teamcode.jules.shot.ShooterController;
+import org.firstinspires.ftc.teamcode.jules.shot.ShotPlannerBridge;
 import org.firstinspires.ftc.teamcode.jules.telemetry.JulesDataOrganizer;
 
 import java.lang.reflect.Method;
@@ -56,6 +59,10 @@ public final class JULESVirtualShooter extends OpMode {
     private Thread busPump;
     private final Queue<String> pendingCmds = new ConcurrentLinkedQueue<>();
 
+    // ---- RL shot-planning bridge ----
+    private ShotPlannerBridge rlBridge;
+    private MailboxConsumer rlMailbox;  // currently unused but wired for future
+
     // ---- Virtual hardware ----
     private final VirtualMotorEx wheel = new VirtualMotorEx(BjornConstants.Motors.WHEEL, true);
     private final VirtualMotorEx wheel2 = new VirtualMotorEx(BjornConstants.Motors.WHEEL2, true);
@@ -63,6 +70,9 @@ public final class JULESVirtualShooter extends OpMode {
     private final VirtualServo lift = new VirtualServo(BjornConstants.Servos.LIFT);
 
     private ShooterController shooter;
+
+    // Real pack sensor (if present)
+    private VoltageSensor hubVoltage;
 
     // ---- State ----
     private final ElapsedTime loopTimer = new ElapsedTime();
@@ -84,10 +94,26 @@ public final class JULESVirtualShooter extends OpMode {
 
     private ShooterController.ShotMetrics lastShotMetrics;
     private long lastShotTimestampMs = 0L;
+    private long shotSeq = 0L;
+    private String lastShotId = null;
+    private String sessionId = newSessionId();
+    private static final String BOT_ID = "virtual_shooter";
 
     @Override
     public void init() {
         shooter = new ShooterController(wheel, wheel2, intake, lift);
+        sessionId = newSessionId();
+        shotSeq = 0L;
+        lastShotId = null;
+
+        // Grab the first available hub voltage sensor (real pack)
+        try {
+            for (VoltageSensor vs : hardwareMap.getAll(VoltageSensor.class)) {
+                hubVoltage = vs;
+                break;
+            }
+        } catch (Exception ignored) {
+        }
 
         bridgeManager = JulesBridgeManager.getInstance();
         if (bridgeManager != null) {
@@ -95,6 +121,15 @@ public final class JULESVirtualShooter extends OpMode {
             bridgePort = bridgeManager.getPort();
             streamBus = bridgeManager.getStreamBus();
         }
+
+        // RL bridge: use the same RL server as the physical ShotTrainer
+        rlBridge = new ShotPlannerBridge(hardwareMap.appContext);
+        rlBridge.setBotId("virtual_shooter");
+        rlBridge.setSessionId("default");  // TODO make configurable if needed
+        rlBridge.connect();
+
+        // Optional mailbox (not actively used yet here; full RL loop lives in ShotTrainer)
+        rlMailbox = new MailboxConsumer(rlBridge, /* rpmProvider */ null);
 
         // Subscribe to the shared bus so we can receive commands even if Panels is offline.
         if (streamBus != null) {
@@ -138,7 +173,9 @@ public final class JULESVirtualShooter extends OpMode {
         telemetry.addData("bridge", bridgeManager != null ? "connected" : "offline");
         telemetry.update();
         loopTimer.reset();
-        dataOrganizer.updateBatteryOverride(batteryVoltage);
+
+        // publish the sim pack separately so the main vitals.battery_v can stay real
+        dataOrganizer.recordTelemetry("sim.battery_v", batteryVoltage);
     }
 
     @Override
@@ -251,7 +288,14 @@ public final class JULESVirtualShooter extends OpMode {
             busPump.interrupt();
             busPump = null;
         }
-        dataOrganizer.clearBatteryOverride();
+        // rlMailbox has no close(); just let it be GC'd
+        if (rlBridge != null) {
+            try {
+                rlBridge.close();
+            } catch (Exception ignored) {
+            }
+            rlBridge = null;
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -344,6 +388,9 @@ public final class JULESVirtualShooter extends OpMode {
         if (queued != null) {
             return queued;
         }
+
+        // For now we do NOT consume RL mailbox here; plans are handled in ShotTrainerOpMode.
+
         try {
             for (String m : new String[]{"getAndClear", "take", "poll", "consume", "next"}) {
                 try {
@@ -421,7 +468,13 @@ public final class JULESVirtualShooter extends OpMode {
         hb.addProperty("ts_ms", System.currentTimeMillis());
         hb.addProperty("uptime_ms", (long) loopTimer.milliseconds());
         hb.addProperty("active_opmode", "JULES Virtual Shooter");
-        hb.addProperty("battery_v", batteryVoltage);
+        hb.addProperty("session_id", sessionId);
+        hb.addProperty("bot_id", BOT_ID);
+
+        double packV = currentPackVoltage();
+        if (Double.isFinite(packV)) {
+            hb.addProperty("battery_v", packV);
+        }
         hb.addProperty("port", bridgePort);
         busPublish(hb.toString());
     }
@@ -430,7 +483,13 @@ public final class JULESVirtualShooter extends OpMode {
         JsonObject snap = new JsonObject();
         snap.addProperty("type", "snapshot");
         snap.addProperty("ts_ms", System.currentTimeMillis());
-        snap.addProperty("battery_v", batteryVoltage);
+        snap.addProperty("session_id", sessionId);
+        snap.addProperty("bot_id", BOT_ID);
+
+        double packV = currentPackVoltage();
+        if (Double.isFinite(packV)) {
+            snap.addProperty("battery_v", packV);
+        }
 
         JsonObject motors = new JsonObject();
         motors.add(wheel.name, wheel.toJson());
@@ -445,7 +504,7 @@ public final class JULESVirtualShooter extends OpMode {
         sim.addProperty("ready", shooter.isReady((long) loopTimer.milliseconds()));
         sim.addProperty("locked_out", shooter.isLockedOut((long) loopTimer.milliseconds()));
         sim.addProperty("spin_requested", spinRequested);
-        sim.addProperty("battery_v", batteryVoltage);
+        sim.addProperty("battery_v", batteryVoltage);  // virtual pack for sim analysis
 
         if (lastShotMetrics != null) {
             JsonObject shot = new JsonObject();
@@ -453,6 +512,9 @@ public final class JULESVirtualShooter extends OpMode {
             shot.addProperty("ready_latency_ms", lastShotMetrics.timeToReadyMs);
             shot.addProperty("fire_ts", lastShotMetrics.fireTimestampMs);
             shot.addProperty("recorded_ts_ms", lastShotTimestampMs);
+            if (lastShotId != null) {
+                shot.addProperty("shot_id", lastShotId);
+            }
             sim.add("last_shot", shot);
         }
 
@@ -460,13 +522,55 @@ public final class JULESVirtualShooter extends OpMode {
         busPublish(snap.toString());
     }
 
+    private static String newSessionId() {
+        return String.format(Locale.US, "virt-%08x", System.currentTimeMillis() & 0xffffffffL);
+    }
+
+    private String nextShotId() {
+        shotSeq += 1L;
+        return sessionId + "-" + shotSeq;
+    }
+
+    private double currentPackVoltage() {
+        if (hubVoltage != null) {
+            try {
+                double v = hubVoltage.getVoltage();
+                if (Double.isFinite(v)) {
+                    return v;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return batteryVoltage;
+    }
+
     private void publishShotEvent(ShooterController.ShotMetrics metrics) {
         JsonObject ev = new JsonObject();
         ev.addProperty("type", "shot");
         ev.addProperty("ts_ms", System.currentTimeMillis());
+        String shotId = nextShotId();
+        lastShotId = shotId;
+        ev.addProperty("shot_id", shotId);
+        ev.addProperty("session_id", sessionId);
+        ev.addProperty("bot_id", BOT_ID);
+        double packV = currentPackVoltage();
+        if (Double.isFinite(packV)) {
+            ev.addProperty("battery_v", packV);
+        }
         ev.addProperty("rpm_at_fire", metrics.rpmAtFire);
         ev.addProperty("ready_latency_ms", metrics.timeToReadyMs);
         ev.addProperty("fire_command_ms", metrics.fireTimestampMs);
+        JsonObject context = new JsonObject();
+        context.addProperty("manual_target_rpm", manualTargetRpm);
+        context.addProperty("target_rpm", shooter.getTargetRpm());
+        context.addProperty("measured_rpm", shooter.getMeasuredRpm());
+        context.addProperty("spin_requested", spinRequested);
+        context.addProperty("locked_out", shooter.isLockedOut((long) loopTimer.milliseconds()));
+        if (Double.isFinite(packV)) {
+            context.addProperty("battery_v", packV);
+        }
+        context.addProperty("sim_battery_v", batteryVoltage);
+        ev.add("context", context);
         busPublish(ev.toString());
     }
 
@@ -485,7 +589,7 @@ public final class JULESVirtualShooter extends OpMode {
                 batteryVoltage = Math.min(BATTERY_MAX_V, batteryVoltage + recover);
             }
         }
-        dataOrganizer.updateBatteryOverride(batteryVoltage);
+        dataOrganizer.recordTelemetry("sim.battery_v", batteryVoltage);
     }
 
     private void publishCmdStatus(String name, String status, JsonObject args) {

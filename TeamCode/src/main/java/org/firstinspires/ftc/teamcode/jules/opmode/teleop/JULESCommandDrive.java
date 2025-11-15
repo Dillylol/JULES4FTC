@@ -7,6 +7,7 @@ import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.Gamepad;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.util.ElapsedTime;
+import com.qualcomm.robotcore.hardware.VoltageSensor;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 
 import com.google.gson.JsonElement;
@@ -43,6 +44,7 @@ public class JULESCommandDrive extends OpMode {
     private JulesStreamBus.Subscription busSub;
     private Thread busPump;
     private final Queue<String> pendingCmds = new ConcurrentLinkedQueue<>();
+    private VoltageSensor hubVoltage;
 
     // ---- Panels (optional) ----
     private Object panelsTelemetryObj;                   // PanelsTelemetry.INSTANCE.getTelemetry()
@@ -66,6 +68,12 @@ public class JULESCommandDrive extends OpMode {
         BjornHardware hw = BjornHardware.forTeleOp(hardwareMap);
         lf = hw.frontLeft;  rf = hw.frontRight;  lr = hw.backLeft;  rr = hw.backRight;
         imu = hw.imu;
+        try {
+            for (VoltageSensor sensor : hardwareMap.getAll(VoltageSensor.class)) {
+                hubVoltage = sensor;
+                break;
+            }
+        } catch (Exception ignored) { }
 
         // Match TeleOp hub orientation for yaw
         IMU.Parameters params = new IMU.Parameters(new RevHubOrientationOnRobot(
@@ -347,6 +355,11 @@ public class JULESCommandDrive extends OpMode {
         hb.addProperty("type", "heartbeat");
         hb.addProperty("ts_ms", System.currentTimeMillis());
         hb.addProperty("active_opmode", "JULES CommandDrive");
+        hb.addProperty("uptime_ms", (long) t.milliseconds());
+        double packV = readBatteryVoltage();
+        if (Double.isFinite(packV)) {
+            hb.addProperty("battery_v", packV);
+        }
         busPublish(hb.toString());
     }
 
@@ -354,6 +367,10 @@ public class JULESCommandDrive extends OpMode {
         JsonObject snap = new JsonObject();
         snap.addProperty("type", "snapshot");
         snap.addProperty("ts_ms", System.currentTimeMillis());
+        double packV = readBatteryVoltage();
+        if (Double.isFinite(packV)) {
+            snap.addProperty("battery_v", packV);
+        }
         JsonObject powers = new JsonObject();
         powers.addProperty("lf", pLF);
         powers.addProperty("rf", pRF);
@@ -390,6 +407,17 @@ public class JULESCommandDrive extends OpMode {
             try { if (o.has(k) && o.get(k).isJsonPrimitive()) return o.get(k).getAsDouble(); } catch (Exception ignored) {}
         }
         return def;
+    }
+
+    private double readBatteryVoltage() {
+        if (hubVoltage == null) {
+            return Double.NaN;
+        }
+        try {
+            return hubVoltage.getVoltage();
+        } catch (Exception e) {
+            return Double.NaN;
+        }
     }
 
     private static int parseDurationFields(JsonObject args, int defMs) {

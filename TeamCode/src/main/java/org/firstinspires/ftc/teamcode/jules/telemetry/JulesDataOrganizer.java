@@ -268,7 +268,11 @@ public class JulesDataOrganizer {
         heartbeat.addProperty("type", "heartbeat");
         heartbeat.addProperty("ts_ms", now);
         heartbeat.addProperty("seq", sequence.incrementAndGet());
-        heartbeat.addProperty("battery_v", getBatteryVoltage());
+        heartbeat.addProperty("uptime_ms", getOpModeUptimeMs());
+        double battery = getBatteryVoltage();
+        if (Double.isFinite(battery)) {
+            heartbeat.addProperty("battery_v", round3(battery));
+        }
         heartbeat.addProperty("active_opmode", getActiveOpModeName());
         return heartbeat;
     }
@@ -630,6 +634,23 @@ public class JulesDataOrganizer {
             return value;
         }
         return Math.round(value * 1000.0) / 1000.0;
+    }
+
+    private long getOpModeUptimeMs() {
+        OpMode op = opMode;
+        if (op == null) {
+            return 0L;
+        }
+        try {
+            double seconds = op.getRuntime();
+            if (!Double.isFinite(seconds)) {
+                return 0L;
+            }
+            long millis = (long) Math.round(seconds * 1000.0);
+            return Math.max(0L, millis);
+        } catch (Exception ignored) {
+            return 0L;
+        }
     }
 
     private String getActiveOpModeName() {

@@ -6,6 +6,7 @@ import com.qualcomm.robotcore.hardware.DistanceSensor;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.Servo;
+import com.qualcomm.robotcore.hardware.VoltageSensor;
 
 /**
  * Helper that owns references to the robot hardware and applies the shared defaults.
@@ -21,7 +22,7 @@ public final class BjornHardware {
     public final Servo lift;
     public final DistanceSensor frontTof;
     public final IMU imu;
-
+    private final VoltageSensor vSensor;
     private BjornHardware(HardwareMap map) {
         frontLeft  = map.get(DcMotor.class, BjornConstants.Motors.FRONT_LEFT);
         frontRight = map.get(DcMotor.class, BjornConstants.Motors.FRONT_RIGHT);
@@ -29,10 +30,11 @@ public final class BjornHardware {
         backRight  = map.get(DcMotor.class, BjornConstants.Motors.BACK_RIGHT);
         intake     = map.get(DcMotorEx.class, BjornConstants.Motors.INTAKE);
         wheel      = map.get(DcMotorEx.class, BjornConstants.Motors.WHEEL);
-        wheel2      = map.get(DcMotorEx.class, BjornConstants.Motors.WHEEL2);
+        wheel2     = map.get(DcMotorEx.class, BjornConstants.Motors.WHEEL2);
         lift       = map.get(Servo.class, BjornConstants.Servos.LIFT);
         frontTof   = map.get(DistanceSensor.class, BjornConstants.Sensors.TOF_FRONT);
         imu        = map.get(IMU.class, BjornConstants.Sensors.IMU);
+        vSensor    = map.get(VoltageSensor.class, BjornConstants.Sensors.vSensor);
     }
 
     /**
