@@ -31,7 +31,9 @@ public final class ShooterController {
     private static final long DIP_WINDOW_MS = 220L;
     private static final long LOCKOUT_MS = 700L;
     private static final long LIFT_HOLD_MS = 350L;
-    private static final long INTAKE_PULSE_NS = 200_000_000L;
+    // 3 seconds of intake feed after fire()
+    private static final long INTAKE_PULSE_NS = 3_000_000_000L;
+
     private static final double RPM_MIN = 1200.0;
     private static final double RPM_MAX = 3000.0;
     private static final double EMA_ALPHA = 0.2;

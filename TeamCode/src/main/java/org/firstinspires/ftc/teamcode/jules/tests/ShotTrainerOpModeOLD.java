@@ -26,7 +26,7 @@ import java.util.Locale;
  * Pedro-driven shot trainer that walks the robot through a set of ranges and reports shots on the
  * primary JULES telemetry stream so the desktop RL client can score them.
  */
-@Autonomous(name = "JULES: Shot Trainer", group = "JULES")
+@Autonomous(name = "JULES: Shot TrainerO OLD", group = "JULES")
 public final class ShotTrainerOpModeOLD extends OpMode {
 
     private static final String TAG = "ShotTrainerOpMode";

@@ -52,6 +52,6 @@ public final class BjornConstants {
 
         public static final String IMU       = "imu";
         public static final String TOF_FRONT = "TOF";
-        public static final String vSensor = "vSensor";
+        //public static final String vSensor = "vSensor";
     }
 }
