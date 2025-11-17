@@ -4,6 +4,7 @@ import androidx.annotation.Nullable;
 
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.Servo;
+import com.qualcomm.robotcore.hardware.VoltageSensor;
 
 import org.firstinspires.ftc.teamcode.common.BjornConstants;
 
@@ -31,9 +32,7 @@ public final class ShooterController {
     private static final long DIP_WINDOW_MS = 220L;
     private static final long LOCKOUT_MS = 700L;
     private static final long LIFT_HOLD_MS = 350L;
-    // 3 seconds of intake feed after fire()
-    private static final long INTAKE_PULSE_NS = 3_000_000_000L;
-
+    private static final long INTAKE_PULSE_NS = 200_000_000L;
     private static final double RPM_MIN = 1200.0;
     private static final double RPM_MAX = 3000.0;
     private static final double EMA_ALPHA = 0.2;
@@ -42,8 +41,11 @@ public final class ShooterController {
     private final DcMotorEx flywheelSecondary;
     private final DcMotorEx intake;
     private final Servo lift;
+    @Nullable
+    private final VoltageSensor vSensor;
 
     private int targetRpm;
+    private int commandedRpm = 0;
     private long targetSetMs;
     private long readyStartMs;
     private boolean readyLatched;
@@ -66,10 +68,19 @@ public final class ShooterController {
                              @Nullable DcMotorEx flywheelSecondary,
                              @Nullable DcMotorEx intake,
                              @Nullable Servo lift) {
+        this(flywheel, flywheelSecondary, intake, lift, null);
+    }
+
+    public ShooterController(@Nullable DcMotorEx flywheel,
+                             @Nullable DcMotorEx flywheelSecondary,
+                             @Nullable DcMotorEx intake,
+                             @Nullable Servo lift,
+                             @Nullable VoltageSensor vSensor) {
         this.flywheel = flywheel;
         this.flywheelSecondary = flywheelSecondary;
         this.intake = intake;
         this.lift = lift;
+        this.vSensor = vSensor;
         this.targetRpm = 0;
         this.filteredRpm = 0.0;
         this.readyLatencyMs = 0L;
@@ -77,16 +88,16 @@ public final class ShooterController {
     }
 
     public void setTargetRpm(double rpm, long nowMs) {
-        int clamped = (rpm <= 0.0) ? 0 : (int) Math.round(Math.max(RPM_MIN, Math.min(RPM_MAX, rpm)));
-        if (clamped != targetRpm) {
-            targetRpm = clamped;
+        int base = (rpm <= 0.0) ? 0 : (int) Math.round(Math.max(RPM_MIN, Math.min(RPM_MAX, rpm)));
+        int compensated = applyBatteryCompensation(base);
+        if (compensated != targetRpm) {
+            targetRpm = compensated;
             targetSetMs = nowMs;
             readyStartMs = 0L;
             readyLatched = false;
             readyAtMs = 0L;
             readyLatencyMs = 0L;
             readyLatencyAtFire = 0L;
-            commandFlywheel(clamped);
         }
     }
 
@@ -96,6 +107,7 @@ public final class ShooterController {
 
     public void stop(long nowMs) {
         targetRpm = 0;
+        commandedRpm = 0;
         commandFlywheel(0);
         targetSetMs = nowMs;
         readyLatched = false;
@@ -121,6 +133,10 @@ public final class ShooterController {
         return filteredRpm;
     }
 
+    public double getRpmEstimate() {
+        return filteredRpm;
+    }
+
     public void update(long nowMs) {
         double measured = readRpm();
         filteredRpm = (EMA_ALPHA * measured) + ((1.0 - EMA_ALPHA) * filteredRpm);
@@ -129,6 +145,7 @@ public final class ShooterController {
         }
         maintainReadyState(nowMs);
         monitorShotWindow(nowMs);
+        updateFlywheelCommand();
         serviceIntake();
         serviceLift(nowMs);
     }
@@ -226,6 +243,47 @@ public final class ShooterController {
             setPowerSafe(flywheel, 0.0);
             setPowerSafe(flywheelSecondary, 0.0);
         }
+    }
+
+    private double getBatteryVoltage() {
+        if (vSensor == null) {
+            return BjornConstants.Power.NOMINAL_BATT_V;
+        }
+        try {
+            return vSensor.getVoltage();
+        } catch (Exception ignored) {
+            return BjornConstants.Power.NOMINAL_BATT_V;
+        }
+    }
+
+    private int applyBatteryCompensation(int baseRpm) {
+        if (baseRpm <= 0) {
+            return 0;
+        }
+
+        double vNow = getBatteryVoltage();
+        double dV = BjornConstants.Power.NOMINAL_BATT_V - vNow;
+        double compensated = baseRpm + (BjornConstants.Power.SHOOTER_K_V_RPM * dV);
+        if (compensated <= 0.0) {
+            return 0;
+        }
+        compensated = Math.max(RPM_MIN, Math.min(RPM_MAX, compensated));
+        return (int) Math.round(compensated);
+    }
+
+    private void updateFlywheelCommand() {
+        int desired = targetRpm;
+        if (desired <= 0) {
+            commandedRpm = 0;
+        } else {
+            int step = BjornConstants.Power.SHOOTER_MAX_RPM_STEP_PER_UPDATE;
+            if (commandedRpm < desired) {
+                commandedRpm = Math.min(desired, commandedRpm + step);
+            } else if (commandedRpm > desired) {
+                commandedRpm = Math.max(desired, commandedRpm - step);
+            }
+        }
+        commandFlywheel(commandedRpm);
     }
 
     private double readRpm() {

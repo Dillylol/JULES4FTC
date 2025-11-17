@@ -22,7 +22,7 @@ public final class BjornHardware {
     public final Servo lift;
     public final DistanceSensor frontTof;
     public final IMU imu;
-    //private final VoltageSensor vSensor;
+    private final VoltageSensor vSensor;
     private BjornHardware(HardwareMap map) {
         frontLeft  = map.get(DcMotor.class, BjornConstants.Motors.FRONT_LEFT);
         frontRight = map.get(DcMotor.class, BjornConstants.Motors.FRONT_RIGHT);
@@ -34,7 +34,7 @@ public final class BjornHardware {
         lift       = map.get(Servo.class, BjornConstants.Servos.LIFT);
         frontTof   = map.get(DistanceSensor.class, BjornConstants.Sensors.TOF_FRONT);
         imu        = map.get(IMU.class, BjornConstants.Sensors.IMU);
-     //   vSensor    = map.get(VoltageSensor.class, BjornConstants.Sensors.vSensor);
+        vSensor    = map.get(VoltageSensor.class, BjornConstants.Sensors.vSensor);
     }
 
     /**
@@ -84,5 +84,20 @@ public final class BjornHardware {
         wheel2.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
 
 
+    }
+
+    public double getBatteryVoltage() {
+        if (vSensor == null) {
+            return BjornConstants.Power.NOMINAL_BATT_V;
+        }
+        try {
+            return vSensor.getVoltage();
+        } catch (Exception ignored) {
+            return BjornConstants.Power.NOMINAL_BATT_V;
+        }
+    }
+
+    public VoltageSensor getVoltageSensor() {
+        return vSensor;
     }
 }

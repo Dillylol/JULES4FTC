@@ -22,6 +22,7 @@ import org.firstinspires.ftc.teamcode.jules.shot.ShooterController;
 import org.firstinspires.ftc.teamcode.jules.shot.ShotTrainerSettings;
 import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 
+import java.util.Iterator;
 import java.util.Locale;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -36,31 +37,24 @@ public final class ShotTrainerOpMode extends OpMode {
     private static final String TAG = "ShotTrainerOpMode";
 
     // Distance band for training.
-    private static final double MIN_RANGE_IN = 20.0;
-    private static final double MAX_RANGE_IN = 75.0;
-    private static final double STEP_IN = 8.0;
+    private static final double MIN_RANGE_IN = 10.0;
+    private static final double MAX_RANGE_IN = 64.0;
+    private static final double STEP_IN = 4.0;
     private static final double START_RANGE_IN = 25.0;
 
     // Pedro tolerances for "at range".
-    private static final double RANGE_TOLERANCE_IN = 2;
+    private static final double RANGE_TOLERANCE_IN = 0.5;
     private static final double HEADING_TOLERANCE_RAD = Math.toRadians(3.0);
 
-    // 0" = closest legal shooting line along -X. Positive range = farther from goal.
-    // Heading is still 0 rad; adjust if you want the bot rotated differently.
+    // 0" = closest legal shooting line along +Y. Positive = away from goal.
     private static final double TRAIN_HEADING_RAD = Math.toRadians(0.0);
 
-    // Time to wait after a shot before stopping shooter/intake and advancing range.
-    // This effectively controls how long the intake stays on after a fire.
-    // Tweak this as needed (currently ~3 seconds).
-    private static final long WAIT_FOR_REWARD_MS = 3_000L;
-
+    private static final long WAIT_FOR_REWARD_MS = 1_500L;
     private static final double RPM_MIN = 1_800.0;
     private static final double RPM_MAX = 3_000.0;
     private static final double MAX_OVERRIDE_DELTA_RPM = 250.0;
 
-    // Real pack sensor (if present) – initialized like the virtual shooter
     private VoltageSensor voltageSensor;
-
     private ShooterController shooter;
     private Follower drive;
     private Pose basePoseNearGoal = new Pose(0.0, 0.0, TRAIN_HEADING_RAD);
@@ -112,8 +106,6 @@ public final class ShotTrainerOpMode extends OpMode {
         telemetry.addLine("Initializing Pedro shot trainer...");
         BjornHardware hardware = BjornHardware.forAutonomous(hardwareMap);
         shooter = new ShooterController(hardware.wheel, hardware.wheel2, hardware.intake, hardware.lift);
-
-        // Initialize battery sensor like JULESVirtualShooter – first available pack sensor
         voltageSensor = firstVoltageSensor();
 
         try {
@@ -179,8 +171,6 @@ public final class ShotTrainerOpMode extends OpMode {
         }
         shooter.update(nowMs);
         handleIncomingCommands(nowMs);
-
-        // Use the real pack sensor when present
         currentBatteryV = readVoltage();
 
         Pose pose = drive != null ? drive.getPose() : null;
@@ -455,10 +445,8 @@ public final class ShotTrainerOpMode extends OpMode {
     }
 
     private Pose poseForRange(double rangeIn) {
-        // March along the -X axis: basePoseNearGoal.x is "0 inches from goal"
-        // and increasing range moves the robot to more negative X.
-        double targetX = basePoseNearGoal.getX() - rangeIn;
-        double targetY = basePoseNearGoal.getY();
+        double targetX = basePoseNearGoal.getX();
+        double targetY = basePoseNearGoal.getY() + rangeIn;
         return new Pose(targetX, targetY, TRAIN_HEADING_RAD);
     }
 
@@ -538,8 +526,7 @@ public final class ShotTrainerOpMode extends OpMode {
         if (pose == null) {
             return currentRangeIn;
         }
-        // Range is "how far we moved in -X from the base pose"
-        return basePoseNearGoal.getX() - pose.getX();
+        return pose.getY() - basePoseNearGoal.getY();
     }
 
     private double angleWrap(double angleRad) {
@@ -553,39 +540,22 @@ public final class ShotTrainerOpMode extends OpMode {
         return wrapped;
     }
 
-    /**
-     * Match the virtual shooter pattern: grab the first available VoltageSensor
-     * from the hardware map, without going through BjornHardware.
-     */
     private VoltageSensor firstVoltageSensor() {
+        Iterator<VoltageSensor> it = hardwareMap.voltageSensor.iterator();
+        return it.hasNext() ? it.next() : null;
+    }
+
+    private double readVoltage() {
+        if (voltageSensor == null) {
+            return currentBatteryV;
+        }
         try {
-            for (VoltageSensor vs : hardwareMap.getAll(VoltageSensor.class)) {
-                return vs;
+            double v = voltageSensor.getVoltage();
+            if (Double.isFinite(v) && v > 0) {
+                return v;
             }
         } catch (Exception ignored) {
         }
-        return null;
-    }
-
-    /**
-     * Read pack voltage safely. Lazily re-resolves the sensor if needed and
-     * falls back to the last-known simulated value if anything goes wrong.
-     */
-    private double readVoltage() {
-        // Lazy-init / re-acquire sensor if it wasn't ready in init()
-        if (voltageSensor == null) {
-            voltageSensor = firstVoltageSensor();
-        }
-        if (voltageSensor != null) {
-            try {
-                double v = voltageSensor.getVoltage();
-                if (Double.isFinite(v) && v > 0) {
-                    return v;
-                }
-            } catch (Exception ignored) {
-            }
-        }
-        // Fallback to currentBatteryV (e.g. sim/default)
         return currentBatteryV;
     }
 

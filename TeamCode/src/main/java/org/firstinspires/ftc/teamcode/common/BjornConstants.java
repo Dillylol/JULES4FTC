@@ -52,6 +52,20 @@ public final class BjornConstants {
 
         public static final String IMU       = "imu";
         public static final String TOF_FRONT = "TOF";
-        //public static final String vSensor = "vSensor";
+        public static final String vSensor = "vSensor";
+    }
+
+    public static final class Power {
+        private Power() {
+        }
+
+        // Nominal battery voltage (12V system baseline)
+        public static final double NOMINAL_BATT_V = 12.0;
+
+        // RPM added per volt of sag for the shooter (trained by K-tuner)
+        public static final double SHOOTER_K_V_RPM = 0.0; // keep 0.0 as default
+
+        // Max RPM change per update step for ramping, to reduce current spikes
+        public static final int SHOOTER_MAX_RPM_STEP_PER_UPDATE = 250; // tune as needed
     }
 }
