@@ -584,7 +584,6 @@ public final class ShotTrainerOpMode extends OpMode {
         List<AprilTagCamera.TagObservation> detections = aprilTagCamera.pollDetections();
         lastCvDetectionCount = detections.size();
         aprilTagCamera.publishDetections();
-        aprilTagCamera.publishVideoFrame();
     }
 
     private void updateTelemetry(Pose pose, long nowMs, double measuredRange) {
