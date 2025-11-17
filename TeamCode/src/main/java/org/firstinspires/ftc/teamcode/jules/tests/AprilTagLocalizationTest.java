@@ -47,7 +47,6 @@ public final class AprilTagLocalizationTest extends LinearOpMode {
                     ? aprilTagCamera.pollDetections() : Collections.emptyList();
             if (aprilTagCamera != null) {
                 aprilTagCamera.publishDetections();
-                aprilTagCamera.publishVideoFrame();
             }
 
             telemetry.addData("detections", detections.size());

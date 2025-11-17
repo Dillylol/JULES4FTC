@@ -1,8 +1,5 @@
 package org.firstinspires.ftc.teamcode.jules.cv;
 
-import android.graphics.Bitmap;
-import android.util.Base64;
-
 import androidx.annotation.Nullable;
 
 import com.google.gson.JsonObject;
@@ -10,47 +7,40 @@ import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.util.RobotLog;
 
 import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
-import org.firstinspires.ftc.teamcode.common.CameraConfig;
+import org.firstinspires.ftc.robotcore.external.hardware.camera.controls.ExposureControl;
+import org.firstinspires.ftc.robotcore.external.hardware.camera.controls.GainControl;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesStreamBus;
-import org.openftc.apriltag.AprilTagDetection;
-import org.openftc.apriltag.AprilTagDetectionPipeline;
-import org.openftc.easyopencv.OpenCvCamera;
-import org.openftc.easyopencv.OpenCvCamera.AsyncCameraOpenListener;
-import org.openftc.easyopencv.OpenCvCameraFactory;
-import org.openftc.easyopencv.OpenCvCameraRotation;
+import org.firstinspires.ftc.teamcode.jules.constants.CameraConfig;
+import org.firstinspires.ftc.vision.VisionPortal;
+import org.firstinspires.ftc.vision.VisionPortal.CameraState;
+import org.firstinspires.ftc.vision.apriltag.AprilTagDetection;
+import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
 
-import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /**
- * Shared AprilTag camera helper that wraps EasyOpenCV + OpenFTC pipeline and forwards
- * detections and video frames into the JULES stream bus.
+ * AprilTag camera helper backed by the FTC VisionPortal AprilTagProcessor.
  */
 public final class AprilTagCamera implements AutoCloseable {
 
     private static final String TAG = "AprilTagCamera";
-    private static final int STREAM_WIDTH = 800;
-    private static final int STREAM_HEIGHT = 448;
-    private static final long DETECTION_PUBLISH_INTERVAL_MS = 75L;
-    private static final long VIDEO_PUBLISH_INTERVAL_MS = 250L;
+    private static final double INCH_TO_METER = 0.0254;
 
     private final String webcamName;
 
     @Nullable
-    private OpenCvCamera camera;
+    private volatile VisionPortal visionPortal;
     @Nullable
-    private AprilTagDetectionPipeline pipeline;
+    private volatile AprilTagProcessor aprilTagProcessor;
     @Nullable
     private JulesStreamBus streamBus;
 
-    private volatile boolean opened;
     private volatile List<TagObservation> latestObservations = Collections.emptyList();
     @Nullable
     private volatile TagObservation latestGoalObservation;
-    private volatile long lastDetectionPublishMs = 0L;
-    private volatile long lastVideoPublishMs = 0L;
 
     public AprilTagCamera() {
         this(CameraConfig.WEBCAM_NAME);
@@ -60,7 +50,8 @@ public final class AprilTagCamera implements AutoCloseable {
         this.webcamName = webcamName;
     }
 
-    public void start(HardwareMap hardwareMap, @Nullable JulesStreamBus bus) {
+    public synchronized void start(HardwareMap hardwareMap, @Nullable JulesStreamBus bus) {
+        close();
         this.streamBus = bus;
         WebcamName camName;
         try {
@@ -70,41 +61,30 @@ public final class AprilTagCamera implements AutoCloseable {
             return;
         }
 
-        int monitorViewId = hardwareMap.appContext.getResources().getIdentifier(
-                "cameraMonitorViewId",
-                "id",
-                hardwareMap.appContext.getPackageName());
-
-        camera = OpenCvCameraFactory.getInstance().createWebcam(camName, monitorViewId);
-        pipeline = new AprilTagDetectionPipeline(
-                CameraConfig.TAG_SIZE_METERS,
-                CameraConfig.FX,
-                CameraConfig.FY,
-                CameraConfig.CX,
-                CameraConfig.CY);
-        camera.setPipeline(pipeline);
-        camera.openCameraDeviceAsync(new AsyncCameraOpenListener() {
-            @Override
-            public void onOpened() {
-                opened = true;
-                camera.startStreaming(STREAM_WIDTH, STREAM_HEIGHT, OpenCvCameraRotation.UPRIGHT);
-            }
-
-            @Override
-            public void onError(int errorCode) {
-                RobotLog.ee(TAG, "Camera open failed: %d", errorCode);
-            }
-        });
+        AprilTagProcessor processor = new AprilTagProcessor.Builder()
+                .setLensIntrinsics(CameraConfig.FX, CameraConfig.FY, CameraConfig.CX, CameraConfig.CY)
+                .build();
+        try {
+            visionPortal = new VisionPortal.Builder()
+                    .setCamera(camName)
+                    .addProcessor(processor)
+                    .build();
+            aprilTagProcessor = processor;
+        } catch (Exception e) {
+            RobotLog.ee(TAG, "VisionPortal start failed: %s", e.getMessage());
+            aprilTagProcessor = null;
+            visionPortal = null;
+        }
     }
 
     public List<TagObservation> pollDetections() {
-        AprilTagDetectionPipeline pipe = pipeline;
-        if (pipe == null) {
+        AprilTagProcessor processor = aprilTagProcessor;
+        if (processor == null) {
             latestObservations = Collections.emptyList();
             latestGoalObservation = null;
             return latestObservations;
         }
-        List<AprilTagDetection> detections = pipe.getLatestDetections();
+        List<AprilTagDetection> detections = processor.getDetections();
         if (detections == null || detections.isEmpty()) {
             latestObservations = Collections.emptyList();
             latestGoalObservation = null;
@@ -115,68 +95,38 @@ public final class AprilTagCamera implements AutoCloseable {
         List<TagObservation> converted = new ArrayList<>(detections.size());
         TagObservation bestGoal = null;
         for (AprilTagDetection detection : detections) {
+            if (detection == null || detection.ftcPose == null) {
+                continue;
+            }
             TagObservation obs = TagObservation.fromDetection(now, detection);
             converted.add(obs);
             if (obs.isGoal()) {
-                if (bestGoal == null || obs.z < bestGoal.z) {
+                if (bestGoal == null || Math.abs(obs.z) < Math.abs(bestGoal.z)) {
                     bestGoal = obs;
                 }
             }
         }
-        latestObservations = converted;
+
+        if (converted.isEmpty()) {
+            latestObservations = Collections.emptyList();
+            latestGoalObservation = null;
+            return latestObservations;
+        }
+
+        List<TagObservation> snapshot = Collections.unmodifiableList(converted);
+        latestObservations = snapshot;
         latestGoalObservation = bestGoal;
-        return converted;
+        return snapshot;
     }
 
     public void publishDetections() {
         JulesStreamBus bus = streamBus;
-        if (bus == null || latestObservations.isEmpty()) {
+        List<TagObservation> observations = latestObservations;
+        if (bus == null || observations.isEmpty()) {
             return;
         }
-        long now = System.currentTimeMillis();
-        if (now - lastDetectionPublishMs < DETECTION_PUBLISH_INTERVAL_MS) {
-            return;
-        }
-        for (TagObservation obs : latestObservations) {
+        for (TagObservation obs : observations) {
             bus.publishJsonLine(obs.toJson().toString());
-        }
-        lastDetectionPublishMs = now;
-    }
-
-    public void publishVideoFrame() {
-        JulesStreamBus bus = streamBus;
-        OpenCvCamera cam = camera;
-        if (bus == null || cam == null || !opened) {
-            return;
-        }
-        long now = System.currentTimeMillis();
-        if (now - lastVideoPublishMs < VIDEO_PUBLISH_INTERVAL_MS) {
-            return;
-        }
-        Bitmap bitmap;
-        try {
-            bitmap = cam.getFrameBitmap();
-        } catch (Exception e) {
-            RobotLog.ww(TAG, "Frame grab failed: %s", e.getMessage());
-            return;
-        }
-        if (bitmap == null) {
-            return;
-        }
-        try {
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 55, baos);
-            byte[] jpeg = baos.toByteArray();
-            JsonObject packet = new JsonObject();
-            packet.addProperty("type", "video_frame");
-            packet.addProperty("ts_ms", now);
-            packet.addProperty("jpeg_b64", Base64.encodeToString(jpeg, Base64.NO_WRAP));
-            bus.publishJsonLine(packet.toString());
-            lastVideoPublishMs = now;
-        } catch (Exception e) {
-            RobotLog.ee(TAG, "Failed to publish video frame: %s", e.getMessage());
-        } finally {
-            bitmap.recycle();
         }
     }
 
@@ -189,21 +139,38 @@ public final class AprilTagCamera implements AutoCloseable {
         return latestObservations.size();
     }
 
-    @Override
-    public void close() {
-        opened = false;
-        if (camera != null) {
-            try {
-                camera.stopStreaming();
-            } catch (Exception ignored) {
-            }
-            try {
-                camera.closeCameraDevice();
-            } catch (Exception ignored) {
-            }
-            camera = null;
+    public void setManualExposure(int exposureMs, int gain) {
+        VisionPortal portal = visionPortal;
+        if (portal == null || portal.getCameraState() != CameraState.STREAMING) {
+            return;
         }
-        pipeline = null;
+        ExposureControl exposureControl = portal.getCameraControl(ExposureControl.class);
+        if (exposureControl != null) {
+            if (exposureControl.getMode() != ExposureControl.Mode.Manual) {
+                exposureControl.setMode(ExposureControl.Mode.Manual);
+            }
+            exposureControl.setExposure((long) exposureMs, TimeUnit.MILLISECONDS);
+        }
+        GainControl gainControl = portal.getCameraControl(GainControl.class);
+        if (gainControl != null) {
+            gainControl.setGain(gain);
+        }
+    }
+
+    @Override
+    public synchronized void close() {
+        if (visionPortal != null) {
+            try {
+                visionPortal.close();
+            } catch (Exception e) {
+                RobotLog.ww(TAG, "VisionPortal close failed: %s", e.getMessage());
+            }
+            visionPortal = null;
+        }
+        aprilTagProcessor = null;
+        latestObservations = Collections.emptyList();
+        latestGoalObservation = null;
+        streamBus = null;
     }
 
     public static final class TagObservation {
@@ -238,12 +205,12 @@ public final class AprilTagCamera implements AutoCloseable {
         }
 
         static TagObservation fromDetection(long ts, AprilTagDetection detection) {
-            double x = detection.pose.x;
-            double y = detection.pose.y;
-            double z = detection.pose.z;
-            double yaw = detection.pose.yaw;
-            double pitch = detection.pose.pitch;
-            double roll = detection.pose.roll;
+            double x = detection.ftcPose.x * INCH_TO_METER;
+            double y = detection.ftcPose.y * INCH_TO_METER;
+            double z = detection.ftcPose.z * INCH_TO_METER;
+            double yaw = detection.ftcPose.yaw;
+            double pitch = detection.ftcPose.pitch;
+            double roll = detection.ftcPose.roll;
             return new TagObservation(
                     ts,
                     detection.id,
@@ -277,4 +244,3 @@ public final class AprilTagCamera implements AutoCloseable {
         }
     }
 }
-

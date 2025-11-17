@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.common;
+package org.firstinspires.ftc.teamcode.jules.constants;
 
 /**
  * Centralized camera + AprilTag configuration for the 2024-2025 DECODE field.

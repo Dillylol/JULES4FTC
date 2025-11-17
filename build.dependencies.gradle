@@ -19,7 +19,6 @@ dependencies {
     implementation 'org.json:json:20231013'
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.bylazar:gamepad:1.0.3'
-    implementation 'org.openftc:apriltag:1.1.0'
     // --- CORRECTED LINE ---
     implementation 'com.pedropathing:ftc:2.0.2' // Was 2.2.0, now corrected to 2.0.2
     implementation 'com.pedropathing:telemetry:1.0.0'
