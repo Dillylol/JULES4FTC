@@ -1,6 +1,7 @@
 package org.firstinspires.ftc.teamcode.jules.tests;
 
 import com.google.gson.JsonElement;
+import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
@@ -18,11 +19,13 @@ import org.firstinspires.ftc.teamcode.common.BjornHardware;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesStreamBus;
 import org.firstinspires.ftc.teamcode.jules.bridge.util.GsonCompat;
+import org.firstinspires.ftc.teamcode.jules.cv.AprilTagCamera;
 import org.firstinspires.ftc.teamcode.jules.shot.ShooterController;
 import org.firstinspires.ftc.teamcode.jules.shot.ShotTrainerSettings;
 import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 
 import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -37,13 +40,13 @@ public final class ShotTrainerOpMode extends OpMode {
     private static final String TAG = "ShotTrainerOpMode";
 
     // Distance band for training.
-    private static final double MIN_RANGE_IN = 10.0;
-    private static final double MAX_RANGE_IN = 64.0;
-    private static final double STEP_IN = 4.0;
+    private static final double MIN_RANGE_IN = 30.0;
+    private static final double MAX_RANGE_IN = 80.0;
+    private static final double STEP_IN = 6.0;
     private static final double START_RANGE_IN = 25.0;
 
     // Pedro tolerances for "at range".
-    private static final double RANGE_TOLERANCE_IN = 0.5;
+    private static final double RANGE_TOLERANCE_IN = 1.5;
     private static final double HEADING_TOLERANCE_RAD = Math.toRadians(3.0);
 
     // 0" = closest legal shooting line along +Y. Positive = away from goal.
@@ -65,6 +68,8 @@ public final class ShotTrainerOpMode extends OpMode {
     private JulesStreamBus.Subscription busSub;
     private Thread busPump;
     private final Queue<String> pendingCmds = new ConcurrentLinkedQueue<>();
+    private AprilTagCamera aprilTagCamera;
+    private int lastCvDetectionCount = 0;
 
     private double currentRangeIn = START_RANGE_IN;
     private int rangeDirection = +1;
@@ -124,6 +129,13 @@ public final class ShotTrainerOpMode extends OpMode {
             bridgeManager.prepare(hardwareMap.appContext);
             streamBus = bridgeManager.getStreamBus();
         }
+        try {
+            aprilTagCamera = new AprilTagCamera();
+            aprilTagCamera.start(hardwareMap, streamBus);
+        } catch (Exception e) {
+            RobotLog.ee(TAG, "AprilTag camera init failed: %s", e.getMessage());
+            aprilTagCamera = null;
+        }
         startBusListener();
 
         Pose startPose = poseForRange(START_RANGE_IN);
@@ -172,6 +184,7 @@ public final class ShotTrainerOpMode extends OpMode {
         shooter.update(nowMs);
         handleIncomingCommands(nowMs);
         currentBatteryV = readVoltage();
+        serviceAprilTags();
 
         Pose pose = drive != null ? drive.getPose() : null;
         double measuredRange = measuredRangeIn(pose);
@@ -237,6 +250,10 @@ public final class ShotTrainerOpMode extends OpMode {
     @Override
     public void stop() {
         shooter.stop(System.currentTimeMillis());
+        if (aprilTagCamera != null) {
+            aprilTagCamera.close();
+            aprilTagCamera = null;
+        }
         if (busSub != null) {
             try {
                 busSub.close();
@@ -559,6 +576,17 @@ public final class ShotTrainerOpMode extends OpMode {
         return currentBatteryV;
     }
 
+    private void serviceAprilTags() {
+        if (aprilTagCamera == null) {
+            lastCvDetectionCount = 0;
+            return;
+        }
+        List<AprilTagCamera.TagObservation> detections = aprilTagCamera.pollDetections();
+        lastCvDetectionCount = detections.size();
+        aprilTagCamera.publishDetections();
+        aprilTagCamera.publishVideoFrame();
+    }
+
     private void updateTelemetry(Pose pose, long nowMs, double measuredRange) {
         telemetry.addData("state", state);
         telemetry.addData("session", sessionId);
@@ -573,6 +601,20 @@ public final class ShotTrainerOpMode extends OpMode {
                 Double.isNaN(currentOverrideRpm) ? "n/a" : String.format(Locale.US, "%.0f", currentOverrideRpm));
         telemetry.addData("battery_v", String.format(Locale.US, "%.2f", currentBatteryV));
         telemetry.addData("shooter_ready", shooter.isReady(nowMs));
+        telemetry.addData("cv_detections", lastCvDetectionCount);
+        AprilTagCamera.TagObservation goalObs = aprilTagCamera != null
+                ? aprilTagCamera.getLatestGoalObservation() : null;
+        if (goalObs != null) {
+            telemetry.addData("cv_goal",
+                    String.format(Locale.US, "id=%d class=%s z=%.2f x=%.2f y=%.2f",
+                            goalObs.id,
+                            goalObs.tagClass,
+                            goalObs.z,
+                            goalObs.x,
+                            goalObs.y));
+        } else {
+            telemetry.addData("cv_goal", "none");
+        }
         if (pose != null) {
             telemetry.addData("pose",
                     String.format(Locale.US, "x=%.1f y=%.1f h=%.1f",
@@ -619,7 +661,42 @@ public final class ShotTrainerOpMode extends OpMode {
             ctx.addProperty("override_rpm", currentOverrideRpm);
         }
         ev.add("context", ctx);
+        appendCvSnapshot(ev);
         busPublish(ev.toString());
+    }
+
+    private void appendCvSnapshot(JsonObject ev) {
+        if (ev == null) {
+            return;
+        }
+        if (aprilTagCamera == null) {
+            addCvNulls(ev);
+            return;
+        }
+        AprilTagCamera.TagObservation obs = aprilTagCamera.getLatestGoalObservation();
+        if (obs == null) {
+            addCvNulls(ev);
+            return;
+        }
+        ev.addProperty("cv_tag_id", obs.id);
+        ev.addProperty("cv_tag_class", obs.tagClass);
+        ev.addProperty("cv_x_m", obs.x);
+        ev.addProperty("cv_y_m", obs.y);
+        ev.addProperty("cv_z_m", obs.z);
+        ev.addProperty("cv_yaw", obs.yaw);
+        ev.addProperty("cv_pitch", obs.pitch);
+        ev.addProperty("cv_roll", obs.roll);
+    }
+
+    private void addCvNulls(JsonObject ev) {
+        ev.add("cv_tag_id", JsonNull.INSTANCE);
+        ev.add("cv_tag_class", JsonNull.INSTANCE);
+        ev.add("cv_x_m", JsonNull.INSTANCE);
+        ev.add("cv_y_m", JsonNull.INSTANCE);
+        ev.add("cv_z_m", JsonNull.INSTANCE);
+        ev.add("cv_yaw", JsonNull.INSTANCE);
+        ev.add("cv_pitch", JsonNull.INSTANCE);
+        ev.add("cv_roll", JsonNull.INSTANCE);
     }
 
     private void publishCmdStatus(String name, String status, JsonObject args) {
