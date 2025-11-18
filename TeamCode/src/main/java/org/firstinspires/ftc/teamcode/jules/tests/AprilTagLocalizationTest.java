@@ -72,14 +72,4 @@ public final class AprilTagLocalizationTest extends LinearOpMode {
             sleep(20);
         }
     }
-
-    @Override
-    public void stop() {
-        super.stop();
-        if (aprilTagCamera != null) {
-            aprilTagCamera.close();
-            aprilTagCamera = null;
-        }
-    }
 }
-

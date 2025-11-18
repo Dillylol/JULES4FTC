@@ -19,7 +19,6 @@ import org.firstinspires.ftc.teamcode.jules.shot.ShooterController;
 import org.firstinspires.ftc.teamcode.jules.shot.ShotTrainerSettings;
 import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 
-import java.util.Iterator;
 import java.util.Locale;
 
 /**
@@ -85,7 +84,7 @@ public final class ShotTrainerOpModeOLD extends OpMode {
         telemetry.addLine("Initializing Pedro shot trainer...");
         BjornHardware hardware = BjornHardware.forAutonomous(hardwareMap);
         shooter = new ShooterController(hardware.wheel, hardware.wheel2, hardware.intake, hardware.lift);
-        voltageSensor = firstVoltageSensor();
+        voltageSensor = hardware.getVoltageSensor();
 
         try {
             drive = Constants.createFollower(hardwareMap);
@@ -304,11 +303,6 @@ public final class ShotTrainerOpModeOLD extends OpMode {
             wrapped += 2.0 * Math.PI;
         }
         return wrapped;
-    }
-
-    private VoltageSensor firstVoltageSensor() {
-        Iterator<VoltageSensor> it = hardwareMap.voltageSensor.iterator();
-        return it.hasNext() ? it.next() : null;
     }
 
     private double readVoltage() {

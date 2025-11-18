@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.jules.constants;
+package org.firstinspires.ftc.teamcode.common;
 
 /**
  * Centralized camera + AprilTag configuration for the 2024-2025 DECODE field.
@@ -23,7 +23,7 @@ public final class CameraConfig {
     public static final double CY = 240.0;
 
     // FTC tag size (2 inches = 50.8mm)
-    public static final double TAG_SIZE_METERS = 0.0508;
+    public static final double TAG_SIZE_METERS = 0.165;
 
     public static final String CLASS_BLUE_GOAL = "blue_goal";
     public static final String CLASS_RED_GOAL = "red_goal";
