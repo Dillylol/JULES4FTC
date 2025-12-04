@@ -30,7 +30,8 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
- * Pedro-driven shot trainer that walks the robot through a set of ranges and reports shots on the
+ * Pedro-driven shot trainer that walks the robot through a set of ranges and
+ * reports shots on the
  * primary JULES telemetry stream so the desktop RL client can score them.
  */
 @Autonomous(name = "JULES: Shot Trainer", group = "JULES")
@@ -102,14 +103,15 @@ public final class ShotTrainerOpMode extends OpMode {
         LEARNED
     }
 
-    // TODO: expose RPM mode selection via dashboard / DS control when RL client is ready.
+    // TODO: expose RPM mode selection via dashboard / DS control when RL client is
+    // ready.
     private RpmControlMode rpmControlMode = RpmControlMode.BASELINE;
 
     @Override
     public void init() {
         telemetry.addLine("Initializing Pedro shot trainer...");
         BjornHardware hardware = BjornHardware.forAutonomous(hardwareMap);
-        shooter = new ShooterController(hardware.wheel, hardware.wheel2, hardware.intake, hardware.lift);
+        shooter = new ShooterController(hardware.wheel, hardware.wheel2, hardware.intake, hardware);
         voltageSensor = hardware.getVoltageSensor();
 
         try {
@@ -313,7 +315,7 @@ public final class ShotTrainerOpMode extends OpMode {
     private boolean handleStructuredCommand(String cmd, JsonObject payload, long nowMs) {
         switch (cmd) {
             case "set_rpm": {
-                double rpm = optDouble(payload, new String[]{"rpm", "value", "target"}, currentTargetRpm);
+                double rpm = optDouble(payload, new String[] { "rpm", "value", "target" }, currentTargetRpm);
                 currentOverrideRpm = Range.clip(rpm, RPM_MIN, RPM_MAX);
                 publishCmdStatus("set_rpm", "accepted", payload);
                 if (rpmControlMode == RpmControlMode.LEARNED) {
@@ -596,7 +598,8 @@ public final class ShotTrainerOpMode extends OpMode {
         telemetry.addData("shooter_ready", shooter.isReady(nowMs));
         telemetry.addData("cv_detections", lastCvDetectionCount);
         AprilTagCamera.TagObservation goalObs = aprilTagCamera != null
-                ? aprilTagCamera.getLatestGoalObservation() : null;
+                ? aprilTagCamera.getLatestGoalObservation()
+                : null;
         if (goalObs != null) {
             telemetry.addData("cv_goal",
                     String.format(Locale.US, "id=%d class=%s z=%.2f x=%.2f y=%.2f",

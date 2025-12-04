@@ -22,7 +22,8 @@ import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 import java.util.Locale;
 
 /**
- * Pedro-driven shot trainer that walks the robot through a set of ranges and reports shots on the
+ * Pedro-driven shot trainer that walks the robot through a set of ranges and
+ * reports shots on the
  * primary JULES telemetry stream so the desktop RL client can score them.
  */
 @Autonomous(name = "JULES: Shot TrainerO OLD", group = "JULES")
@@ -83,7 +84,7 @@ public final class ShotTrainerOpModeOLD extends OpMode {
     public void init() {
         telemetry.addLine("Initializing Pedro shot trainer...");
         BjornHardware hardware = BjornHardware.forAutonomous(hardwareMap);
-        shooter = new ShooterController(hardware.wheel, hardware.wheel2, hardware.intake, hardware.lift);
+        shooter = new ShooterController(hardware.wheel, hardware.wheel2, hardware.intake, hardware);
         voltageSensor = hardware.getVoltageSensor();
 
         try {
@@ -273,7 +274,8 @@ public final class ShotTrainerOpModeOLD extends OpMode {
     }
 
     private double lookupRpmForRange(double rangeIn) {
-        // TODO: Replace with a learned model or interpolation map provided by the client.
+        // TODO: Replace with a learned model or interpolation map provided by the
+        // client.
         double linear = 2100.0 + (rangeIn * 8.0);
         return Math.max(1800.0, Math.min(3000.0, linear));
     }
