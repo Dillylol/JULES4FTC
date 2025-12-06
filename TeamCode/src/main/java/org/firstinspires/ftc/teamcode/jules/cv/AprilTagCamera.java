@@ -51,6 +51,10 @@ public final class AprilTagCamera implements AutoCloseable {
     }
 
     public synchronized void start(HardwareMap hardwareMap, @Nullable JulesStreamBus bus) {
+        start(hardwareMap, bus, 3.0f); // Default decimation
+    }
+
+    public synchronized void start(HardwareMap hardwareMap, @Nullable JulesStreamBus bus, float decimation) {
         close();
         this.streamBus = bus;
         WebcamName camName;
@@ -64,6 +68,7 @@ public final class AprilTagCamera implements AutoCloseable {
         AprilTagProcessor processor = new AprilTagProcessor.Builder()
                 .setLensIntrinsics(CameraConfig.FX, CameraConfig.FY, CameraConfig.CX, CameraConfig.CY)
                 .build();
+        processor.setDecimation(decimation);
         try {
             visionPortal = new VisionPortal.Builder()
                     .setCamera(camName)
@@ -185,14 +190,14 @@ public final class AprilTagCamera implements AutoCloseable {
         public final double roll;
 
         private TagObservation(long timestampMs,
-                               int id,
-                               String tagClass,
-                               double x,
-                               double y,
-                               double z,
-                               double yaw,
-                               double pitch,
-                               double roll) {
+                int id,
+                String tagClass,
+                double x,
+                double y,
+                double z,
+                double yaw,
+                double pitch,
+                double roll) {
             this.timestampMs = timestampMs;
             this.id = id;
             this.tagClass = tagClass;

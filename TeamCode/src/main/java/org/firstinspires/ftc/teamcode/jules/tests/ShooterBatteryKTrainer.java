@@ -8,7 +8,8 @@ import org.firstinspires.ftc.teamcode.common.BjornHardware;
 import org.firstinspires.ftc.teamcode.jules.shot.ShooterController;
 
 /**
- * Linear OpMode that estimates the shooter battery compensation slope (K) by gathering
+ * Linear OpMode that estimates the shooter battery compensation slope (K) by
+ * gathering
  * RPM vs. voltage samples while stepping through a set of targets.
  */
 @Autonomous(name = "ShooterBatteryKTrainer", group = "JULES")
@@ -21,11 +22,10 @@ public final class ShooterBatteryKTrainer extends LinearOpMode {
                 robot.wheel,
                 robot.wheel2,
                 robot.intake,
-                robot.lift,
-                robot.getVoltageSensor()
-        );
+                robot,
+                robot.getVoltageSensor());
 
-        final int[] rpmTargets = new int[]{2300, 2400, 2500, 2600};
+        final int[] rpmTargets = new int[] { 2300, 2400, 2500, 2600 };
 
         int n = 0;
         double sumDV = 0.0;

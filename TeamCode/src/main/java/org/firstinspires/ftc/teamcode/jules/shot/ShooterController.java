@@ -7,6 +7,7 @@ import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 
 import org.firstinspires.ftc.teamcode.common.BjornConstants;
+import org.firstinspires.ftc.teamcode.common.BjornHardware;
 
 /**
  * Owns the flywheel control loop and single-shot sequencing.
@@ -36,11 +37,13 @@ public final class ShooterController {
     private static final double RPM_MIN = 1200.0;
     private static final double RPM_MAX = 3000.0;
     private static final double EMA_ALPHA = 0.2;
+    private static final long RAMP_DURATION_MS = 3000L; // 3 seconds (tunable)
+    private static final double POWER_CAP_FRACTION = 0.8; // 80% of RPM_MAX
 
     private final DcMotorEx flywheel;
     private final DcMotorEx flywheelSecondary;
     private final DcMotorEx intake;
-    private final Servo lift;
+    private final BjornHardware hardware; // Use BjornHardware for lift control
     @Nullable
     private final VoltageSensor vSensor;
 
@@ -63,23 +66,25 @@ public final class ShooterController {
 
     private long liftCloseAtMs;
     private long intakePulseEndNs;
+    private int rampStartRpm = 0;
+    private boolean rampActive = false;
 
     public ShooterController(@Nullable DcMotorEx flywheel,
-                             @Nullable DcMotorEx flywheelSecondary,
-                             @Nullable DcMotorEx intake,
-                             @Nullable Servo lift) {
-        this(flywheel, flywheelSecondary, intake, lift, null);
+            @Nullable DcMotorEx flywheelSecondary,
+            @Nullable DcMotorEx intake,
+            @Nullable BjornHardware hardware) {
+        this(flywheel, flywheelSecondary, intake, hardware, null);
     }
 
     public ShooterController(@Nullable DcMotorEx flywheel,
-                             @Nullable DcMotorEx flywheelSecondary,
-                             @Nullable DcMotorEx intake,
-                             @Nullable Servo lift,
-                             @Nullable VoltageSensor vSensor) {
+            @Nullable DcMotorEx flywheelSecondary,
+            @Nullable DcMotorEx intake,
+            @Nullable BjornHardware hardware,
+            @Nullable VoltageSensor vSensor) {
         this.flywheel = flywheel;
         this.flywheelSecondary = flywheelSecondary;
         this.intake = intake;
-        this.lift = lift;
+        this.hardware = hardware;
         this.vSensor = vSensor;
         this.targetRpm = 0;
         this.filteredRpm = 0.0;
@@ -88,8 +93,11 @@ public final class ShooterController {
     }
 
     public void setTargetRpm(double rpm, long nowMs) {
-        int base = (rpm <= 0.0) ? 0 : (int) Math.round(Math.max(RPM_MIN, Math.min(RPM_MAX, rpm)));
-        int compensated = applyBatteryCompensation(base);
+        double cappedRequest = Math.min(rpm, RPM_MAX * POWER_CAP_FRACTION);
+        int base = (cappedRequest <= 0.0)
+                ? 0
+                : (int) Math.round(Math.max(RPM_MIN, Math.min(RPM_MAX, cappedRequest)));
+        int compensated = applySoftCap(applyBatteryCompensation(base));
         if (compensated != targetRpm) {
             targetRpm = compensated;
             targetSetMs = nowMs;
@@ -98,6 +106,8 @@ public final class ShooterController {
             readyAtMs = 0L;
             readyLatencyMs = 0L;
             readyLatencyAtFire = 0L;
+            rampStartRpm = commandedRpm;
+            rampActive = compensated > 0;
         }
     }
 
@@ -115,6 +125,7 @@ public final class ShooterController {
         readyAtMs = 0L;
         readyLatencyMs = 0L;
         readyLatencyAtFire = 0L;
+        rampActive = false;
     }
 
     public boolean isReady(long nowMs) {
@@ -145,7 +156,7 @@ public final class ShooterController {
         }
         maintainReadyState(nowMs);
         monitorShotWindow(nowMs);
-        updateFlywheelCommand();
+        updateFlywheelCommand(nowMs);
         serviceIntake();
         serviceLift(nowMs);
     }
@@ -271,17 +282,40 @@ public final class ShooterController {
         return (int) Math.round(compensated);
     }
 
-    private void updateFlywheelCommand() {
-        int desired = targetRpm;
+    private int applySoftCap(int rpm) {
+        if (rpm <= 0) {
+            return 0;
+        }
+        double softMax = RPM_MAX * POWER_CAP_FRACTION;
+        return (int) Math.round(Math.min(rpm, softMax));
+    }
+
+    private void updateFlywheelCommand(long nowMs) {
+        int desired = applySoftCap(targetRpm);
         if (desired <= 0) {
             commandedRpm = 0;
+            rampActive = false;
+            commandFlywheel(0);
+            return;
+        }
+
+        if (!rampActive) {
+            // Start ramp
+            rampStartRpm = (int) filteredRpm; // Start from current speed
+            rampActive = true;
+            targetSetMs = nowMs; // Reset ramp timer
+        }
+
+        long dt = Math.max(0L, nowMs - targetSetMs);
+        if (dt >= RAMP_DURATION_MS) {
+            commandedRpm = desired;
+            rampActive = false;
         } else {
-            int step = BjornConstants.Power.SHOOTER_MAX_RPM_STEP_PER_UPDATE;
-            if (commandedRpm < desired) {
-                commandedRpm = Math.min(desired, commandedRpm + step);
-            } else if (commandedRpm > desired) {
-                commandedRpm = Math.max(desired, commandedRpm - step);
-            }
+            // S-Curve Ramping
+            double x = Math.max(0.0, Math.min(1.0, (double) dt / RAMP_DURATION_MS));
+            double s = x * x * (3.0 - 2.0 * x); // Smoothstep
+            double blended = rampStartRpm + (desired - rampStartRpm) * s;
+            commandedRpm = (int) Math.round(blended);
         }
         commandFlywheel(commandedRpm);
     }
@@ -321,21 +355,21 @@ public final class ShooterController {
     }
 
     private void openLift() {
-        if (lift == null) {
+        if (hardware == null) {
             return;
         }
         try {
-            lift.setPosition(BjornConstants.Servos.LIFT_RAISED);
+            hardware.setLiftPosition(BjornConstants.Servos.LIFT_RAISED);
         } catch (Exception ignored) {
         }
     }
 
     private void closeLift() {
-        if (lift == null) {
+        if (hardware == null) {
             return;
         }
         try {
-            lift.setPosition(BjornConstants.Servos.LIFT_LOWERED);
+            hardware.setLiftPosition(BjornConstants.Servos.LIFT_LOWERED);
         } catch (Exception ignored) {
         }
     }
