@@ -64,6 +64,7 @@ public abstract class BaseTagShooterAuto extends OpMode {
         IDLE,
         FOLLOWING_PATH,
         AIMING_AND_SHOOTING,
+        DETECTING_TAG,
         FINISHED
     }
 
@@ -103,10 +104,20 @@ public abstract class BaseTagShooterAuto extends OpMode {
         buildPaths();
     }
 
+    protected int detectedRow = -1; // -1 means no tag detected (fallback)
+    private long detectionStartTime = 0L;
+
     @Override
     public void start() {
         follower.startTeleopDrive(); // Start Pedro
+        // detectStartTag(); // Removed: Detection moved to rotate window
         startAuto();
+    }
+
+    protected void startTagDetection() {
+        currentState = AutoState.DETECTING_TAG;
+        detectionStartTime = SystemClock.elapsedRealtime();
+        detectedRow = -1; // Reset
     }
 
     @Override
@@ -139,12 +150,36 @@ public abstract class BaseTagShooterAuto extends OpMode {
             case AIMING_AND_SHOOTING:
                 aimAndShoot(nowMs);
                 break;
+            case DETECTING_TAG:
+                // Poll for tags (Non-blocking)
+                List<TagObservation> detections = aprilTagCamera.pollDetections();
+                boolean tagFound = false;
+                for (TagObservation obs : detections) {
+                    if (obs.id == 21) {
+                        detectedRow = 1;
+                        tagFound = true;
+                    } else if (obs.id == 22) {
+                        detectedRow = 2;
+                        tagFound = true;
+                    } else if (obs.id == 23) {
+                        detectedRow = 3;
+                        tagFound = true;
+                    }
+                    if (tagFound) break;
+                }
+
+                if (tagFound || (nowMs - detectionStartTime > 1000)) {
+                    // Tag found OR Timeout (1s)
+                    onTagDetectionFinished();
+                }
+                break;
             case IDLE:
             case FINISHED:
                 break;
         }
         
         telemetry.addData("State", currentState);
+        telemetry.addData("Row", detectedRow);
         telemetry.update();
     }
     
@@ -163,6 +198,8 @@ public abstract class BaseTagShooterAuto extends OpMode {
     protected abstract void startAuto();
     protected abstract boolean isTargetGoal(TagObservation obs);
     protected abstract void onPathFinished();
+    protected abstract void onTagDetectionFinished();
+    protected abstract PathChain buildRowPath(int row);
 
     protected void aimAndShoot(long nowMs) {
         TagObservation obs = updateObservation(nowMs);

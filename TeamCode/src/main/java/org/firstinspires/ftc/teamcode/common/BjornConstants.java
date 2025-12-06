@@ -93,4 +93,67 @@ public final class BjornConstants {
         public static final com.pedropathing.geometry.Pose RED_AUTO_START_POSE = new com.pedropathing.geometry.Pose(0,
                 0, Math.toRadians(-85));
     }
+
+    public static final class AutoPoses {
+        private AutoPoses() {
+        }
+
+        public static final class Blue {
+            private Blue() {
+            }
+
+            public static final com.pedropathing.geometry.Pose START = new com.pedropathing.geometry.Pose(0, 0,
+                    Math.toRadians(265));
+            public static final com.pedropathing.geometry.Pose SHOOT_ZONE = new com.pedropathing.geometry.Pose(0, 25,
+                    Math.toRadians(-85));
+            public static final com.pedropathing.geometry.Pose ALIGN1 = new com.pedropathing.geometry.Pose(22.6, 37.7,
+                    Math.toRadians(-58));
+            public static final com.pedropathing.geometry.Pose GRAB1 = new com.pedropathing.geometry.Pose(32.9, 16,
+                    Math.toRadians(-58));
+            public static final com.pedropathing.geometry.Pose ALIGN1_BACK = new com.pedropathing.geometry.Pose(23, 31,
+                    Math.toRadians(-58));
+            public static final com.pedropathing.geometry.Pose PARK = new com.pedropathing.geometry.Pose(28.6, 48.7,
+                    Math.toRadians(-145));
+
+            // Obelisk / Glare Poses
+            public static final com.pedropathing.geometry.Pose GLANCE_POINT = new com.pedropathing.geometry.Pose(5.0,
+                    17.0, Math.toRadians(-175.0));
+            public static final com.pedropathing.geometry.Pose ROW_START = new com.pedropathing.geometry.Pose(1.3, 28.0,
+                    Math.toRadians(-58.0));
+            public static final com.pedropathing.geometry.Pose ROW1 = GRAB1; // Alias
+            public static final com.pedropathing.geometry.Pose ROW2 = new com.pedropathing.geometry.Pose(40.0, 24.2,
+                    Math.toRadians(-58.0));
+            public static final com.pedropathing.geometry.Pose ROW3 = new com.pedropathing.geometry.Pose(47.0, 32.3,
+                    Math.toRadians(-58.0));
+        }
+
+        public static final class Red {
+            private Red() {
+            }
+
+            public static final com.pedropathing.geometry.Pose START = new com.pedropathing.geometry.Pose(0.0, 0.0,
+                    Math.toRadians(-85.0));
+            public static final com.pedropathing.geometry.Pose SHOOT_ZONE = new com.pedropathing.geometry.Pose(0.0,
+                    25.0, Math.toRadians(-85.0));
+            public static final com.pedropathing.geometry.Pose ALIGN1 = new com.pedropathing.geometry.Pose(-9.4, 32.9,
+                    Math.toRadians(-119.0));
+            public static final com.pedropathing.geometry.Pose GRAB1 = new com.pedropathing.geometry.Pose(-32.9, 16.0,
+                    Math.toRadians(-119.0));
+            public static final com.pedropathing.geometry.Pose ALIGN1_BACK = new com.pedropathing.geometry.Pose(-23.0,
+                    31.0, Math.toRadians(-119.0));
+            public static final com.pedropathing.geometry.Pose PARK = new com.pedropathing.geometry.Pose(-24.0, 52.0,
+                    Math.toRadians(-35.0));
+
+            // Obelisk / Glare Poses (Mirrored)
+            public static final com.pedropathing.geometry.Pose GLANCE_POINT = new com.pedropathing.geometry.Pose(-5.0,
+                    17.0, Math.toRadians(-5.0));
+            public static final com.pedropathing.geometry.Pose ROW_START = new com.pedropathing.geometry.Pose(-1.3,
+                    28.0, Math.toRadians(-122.0));
+            public static final com.pedropathing.geometry.Pose ROW1 = GRAB1; // Alias
+            public static final com.pedropathing.geometry.Pose ROW2 = new com.pedropathing.geometry.Pose(-40.0, 24.2,
+                    Math.toRadians(-122.0));
+            public static final com.pedropathing.geometry.Pose ROW3 = new com.pedropathing.geometry.Pose(-47.0, 32.3,
+                    Math.toRadians(-122.0));
+        }
+    }
 }

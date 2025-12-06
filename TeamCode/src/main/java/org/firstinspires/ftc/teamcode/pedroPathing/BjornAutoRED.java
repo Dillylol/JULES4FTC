@@ -32,7 +32,7 @@ import java.util.List;
  * 5) ADDED: S-Curve flywheel ramping, Sensor Fusion (ToF+CV+Pedro), and
  * Drivetrain Optimization.
  */
-@Autonomous(name = "BjornAutoRED")
+@Autonomous(name = "BjornAutoRED_NO_CV")
 public class BjornAutoRED extends OpMode {
 
     // ---------------- Hardware ----------------
