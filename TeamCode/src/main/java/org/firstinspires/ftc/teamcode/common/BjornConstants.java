@@ -25,29 +25,33 @@ public final class BjornConstants {
         public static final String INTAKE = "Intake";
         public static final String WHEEL = "Wheel";
         public static final String WHEEL2 = "Wheel2";
+        public static final String TURRET = "Turret";
+        public static final String GRIP1 = "Grip1";
+        public static final String GRIP2 = "Grip2";
+        public static final String BOOT = "boot";
 
         // Default behaviors
-        public static final DcMotor.Direction DRIVE_DIRECTION = DcMotor.Direction.FORWARD;
+        // public static final DcMotor.Direction DRIVE_DIRECTION = DcMotor.Direction.FORWARD; // Removed
         public static final DcMotor.ZeroPowerBehavior DRIVE_ZERO_POWER = DcMotor.ZeroPowerBehavior.BRAKE;
 
         public static final DcMotor.Direction INTAKE_DIRECTION = DcMotor.Direction.REVERSE;
         public static final DcMotor.ZeroPowerBehavior INTAKE_ZERO_POWER = DcMotor.ZeroPowerBehavior.BRAKE;
-        public static final DcMotor.Direction WHEEL2_DIRECTION = DcMotor.Direction.REVERSE; // flip if needed
+        public static final DcMotor.Direction WHEEL2_DIRECTION = DcMotor.Direction.FORWARD; // flip if needed
         public static final DcMotor.Direction WHEEL_DIRECTION = DcMotor.Direction.REVERSE; // flip if needed
+        public static final DcMotor.Direction TURRET_DIRECTION = DcMotor.Direction.REVERSE; 
+        public static final DcMotor.ZeroPowerBehavior TURRET_ZERO_POWER = DcMotor.ZeroPowerBehavior.BRAKE;
+        public static final DcMotorSimple.Direction GRIP1_DIRECTION = DcMotorSimple.Direction.REVERSE;
+        public static final DcMotorSimple.Direction GRIP2_DIRECTION = DcMotorSimple.Direction.FORWARD;
     }
 
-    public static final class Servos {
-        private Servos() {
+    public static final class GearRatios {
+        private GearRatios() {
         }
-
-        public static final String LIFT = "Lift";
-        public static final String LIFT2 = "Lift2";
-
-        public static final double LIFT_LOWERED = 0.40;
-        public static final double LIFT_RAISED = 0.00;
-
-        public static final double LIFT_OFFSET = 0.0;
-        public static final double LIFT2_OFFSET = 0.0;
+        
+        public static final double DRIVE = 1.0;
+        public static final double INTAKE = 1.0;
+        public static final double WHEEL = 1.0;
+        public static final double TURRET = 1.0;
     }
 
     public static final class Sensors {
@@ -73,8 +77,7 @@ public final class BjornConstants {
 
         // S-Curve Ramp Tuning (Live Tunable)
         public static double RAMP_COEF = 0.00025;
-        public static double RAMP_MIN_RATE = 400.0;
-    }
+        public static double RAMP_MIN_RATE = 400.0;    }
 
     public static final class Auto {
         private Auto() {

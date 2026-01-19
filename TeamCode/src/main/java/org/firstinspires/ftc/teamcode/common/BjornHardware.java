@@ -1,46 +1,135 @@
 package org.firstinspires.ftc.teamcode.common;
 
+import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DistanceSensor;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.Servo;
+import com.qualcomm.robotcore.hardware.CRServo;
+import com.qualcomm.robotcore.hardware.DigitalChannel;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 
 import java.util.List;
+import org.firstinspires.ftc.teamcode.common.turret.TurretEstimator;
 
 /**
  * Helper that owns references to the robot hardware and applies the shared
  * defaults.
  */
 public final class BjornHardware {
-    public final DcMotor frontLeft;
-    public final DcMotor frontRight;
-    public final DcMotor backLeft;
-    public final DcMotor backRight;
+    public final TurretEstimator turretEstimator;
+    public final DcMotorEx frontLeft;
+    public final DcMotorEx frontRight;
+    public final DcMotorEx backLeft;
+    public final DcMotorEx backRight;
     public final DcMotorEx intake;
     public final DcMotorEx wheel;
     public final DcMotorEx wheel2;
-    public final Servo lift;
-    public final Servo lift2;
+    public final DcMotorEx turret;
+    public final CRServo grip1;
+    public final CRServo grip2;
+    public final CRServo boot;
+    public final DigitalChannel led1Green;
+    public final DigitalChannel led1Red;
+    public final DigitalChannel led2Green;
+    public final DigitalChannel led2Red;
+    public final DigitalChannel brake1Green, brake1Red;
+    public final DigitalChannel brake2Green, brake2Red;
     public final DistanceSensor frontTof;
     public final IMU imu;
-    private final VoltageSensor batterySensor;
+    public final VoltageSensor batterySensor; // Can be null in some configs, but usually filtered
+
+    private double lastTurretPos = 0.0;
+    
+    // REV UltraPlanetary HD Hex Motor Specs
+    // Base counts per revolution at the motor
+    private static final double MOTOR_TICKS_PER_REV = 28.0;
+    
+    // User Configuration:
+    // Cartridge 1: 5:1
+    // Cartridge 2: 4:1
+    // External Assembly: 4:1
+    // Total = 5 * 4 * 4 = 80:1
+    private static final double TURRET_GEAR_REDUCTION = 5.0 * 4.0 * 4.0; 
+    
+    public static final double TURRET_TICKS_PER_DEGREE = (MOTOR_TICKS_PER_REV * TURRET_GEAR_REDUCTION) / 360.0; 
 
     private BjornHardware(HardwareMap map) {
-        frontLeft = map.get(DcMotor.class, BjornConstants.Motors.FRONT_LEFT);
-        frontRight = map.get(DcMotor.class, BjornConstants.Motors.FRONT_RIGHT);
-        backLeft = map.get(DcMotor.class, BjornConstants.Motors.BACK_LEFT);
-        backRight = map.get(DcMotor.class, BjornConstants.Motors.BACK_RIGHT);
-        intake = map.get(DcMotorEx.class, BjornConstants.Motors.INTAKE);
-        wheel = map.get(DcMotorEx.class, BjornConstants.Motors.WHEEL);
-        wheel2 = map.get(DcMotorEx.class, BjornConstants.Motors.WHEEL2);
-        lift = map.get(Servo.class, BjornConstants.Servos.LIFT);
-        lift2 = map.get(Servo.class, BjornConstants.Servos.LIFT2);
+        frontLeft = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.FRONT_LEFT), BjornConstants.GearRatios.DRIVE);
+        frontRight = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.FRONT_RIGHT), BjornConstants.GearRatios.DRIVE);
+        backLeft = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.BACK_LEFT), BjornConstants.GearRatios.DRIVE);
+        backRight = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.BACK_RIGHT), BjornConstants.GearRatios.DRIVE);
+        
+        intake = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.INTAKE), BjornConstants.GearRatios.INTAKE);
+        wheel = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.WHEEL), BjornConstants.GearRatios.WHEEL);
+        wheel2 = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.WHEEL2), BjornConstants.GearRatios.WHEEL);
+        turret = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.TURRET), BjornConstants.GearRatios.TURRET);
+        
+        grip1 = map.get(CRServo.class, BjornConstants.Motors.GRIP1);
+        grip2 = map.get(CRServo.class, BjornConstants.Motors.GRIP2);
+        
+        boot = map.get(CRServo.class, BjornConstants.Motors.BOOT);
+        boot.setDirection(CRServo.Direction.FORWARD); // Flip rotation as requested
+
+        led1Green = map.get(DigitalChannel.class, "led1_green");
+        led1Red = map.get(DigitalChannel.class, "led1_red");
+        led2Green = map.get(DigitalChannel.class, "led2_green");
+        led2Red = map.get(DigitalChannel.class, "led2_red");
+
+        led1Green.setMode(DigitalChannel.Mode.OUTPUT);
+        led1Red.setMode(DigitalChannel.Mode.OUTPUT);
+        led2Green.setMode(DigitalChannel.Mode.OUTPUT);
+        led2Red.setMode(DigitalChannel.Mode.OUTPUT);
+
+        // Brake Lights
+        brake1Green = map.get(DigitalChannel.class, "brake1_green");
+        brake1Red = map.get(DigitalChannel.class, "brake1_red");
+        brake2Green = map.get(DigitalChannel.class, "brake2_green");
+        brake2Red = map.get(DigitalChannel.class, "brake2_red");
+
+        brake1Green.setMode(DigitalChannel.Mode.OUTPUT);
+        brake1Red.setMode(DigitalChannel.Mode.OUTPUT);
+        brake2Green.setMode(DigitalChannel.Mode.OUTPUT);
+        brake2Red.setMode(DigitalChannel.Mode.OUTPUT);
+        
+        // Default to Green (Not Braking)
+        brake1Green.setState(true); brake1Red.setState(false);
+        brake2Green.setState(true); brake2Red.setState(false);
+
         frontTof = map.get(DistanceSensor.class, BjornConstants.Sensors.TOF_FRONT);
         imu = map.get(IMU.class, BjornConstants.Sensors.IMU);
+        
+        IMU.Parameters parameters = new IMU.Parameters(new RevHubOrientationOnRobot(
+                RevHubOrientationOnRobot.LogoFacingDirection.LEFT,
+                RevHubOrientationOnRobot.UsbFacingDirection.UP));
+        imu.initialize(parameters);
+
         batterySensor = firstVoltageSensor(map);
+
+        // Init Estimator: Assume 0 degrees at start, with 0 uncertainty (Hardware Reset)
+        turretEstimator = new org.firstinspires.ftc.teamcode.common.turret.TurretEstimator(0.0, 0.0);
+    }
+    
+    public void updateEstimator() {
+        double currentPos = turret.getCurrentPosition();
+        double deltaTicks = currentPos - lastTurretPos;
+        lastTurretPos = currentPos;
+        
+        double deltaDeg = deltaTicks / TURRET_TICKS_PER_DEGREE;
+        turretEstimator.predict(deltaDeg);
+    }
+    
+    /**
+     * Call this when Camera sees a tag to correct belief
+     */
+    public void correctTurretBelief(double seenAngleDeg) {
+        turretEstimator.correct(seenAngleDeg);
+    }
+
+    private static DcMotorEx wrap(DcMotorEx motor, double multiplier) {
+        return new GearRatioMotor(motor, multiplier);
     }
 
     /**
@@ -65,24 +154,30 @@ public final class BjornHardware {
     }
 
     private void configureDriveMotors() {
-        configureDriveMotor(frontLeft);
-        configureDriveMotor(frontRight);
-        configureDriveMotor(backLeft);
-        configureDriveMotor(backRight);
-    }
+        // Front Motors REVERSED
+        frontLeft.setDirection(DcMotor.Direction.REVERSE);
+        frontRight.setDirection(DcMotor.Direction.REVERSE);
+        frontLeft.setZeroPowerBehavior(BjornConstants.Motors.DRIVE_ZERO_POWER);
+        frontRight.setZeroPowerBehavior(BjornConstants.Motors.DRIVE_ZERO_POWER);
 
-    private void configureDriveMotor(DcMotor motor) {
-        motor.setDirection(BjornConstants.Motors.DRIVE_DIRECTION);
-        motor.setZeroPowerBehavior(BjornConstants.Motors.DRIVE_ZERO_POWER);
+        // Back Motors FORWARD
+        backLeft.setDirection(DcMotor.Direction.FORWARD);
+        backRight.setDirection(DcMotor.Direction.FORWARD);
+        backLeft.setZeroPowerBehavior(BjornConstants.Motors.DRIVE_ZERO_POWER);
+        backRight.setZeroPowerBehavior(BjornConstants.Motors.DRIVE_ZERO_POWER);
     }
+    // configureDriveMotor helper removed as it's no longer generic
+
 
     private void configureMechanisms() {
         intake.setDirection(BjornConstants.Motors.INTAKE_DIRECTION);
         intake.setZeroPowerBehavior(BjornConstants.Motors.INTAKE_ZERO_POWER);
         wheel2.setDirection(BjornConstants.Motors.WHEEL2_DIRECTION);
         wheel.setDirection(BjornConstants.Motors.WHEEL_DIRECTION);
-        if (lift2 != null)
-            lift2.setDirection(Servo.Direction.REVERSE); // Typical dual servo setup
+        turret.setDirection(BjornConstants.Motors.TURRET_DIRECTION);
+        turret.setZeroPowerBehavior(BjornConstants.Motors.TURRET_ZERO_POWER);
+        grip1.setDirection(BjornConstants.Motors.GRIP1_DIRECTION);
+        grip2.setDirection(BjornConstants.Motors.GRIP2_DIRECTION);
     }
 
     public void resetWheelEncoder() {
@@ -90,13 +185,9 @@ public final class BjornHardware {
         wheel.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         wheel2.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         wheel2.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-    }
-
-    public void setLiftPosition(double position) {
-        if (lift != null)
-            lift.setPosition(position + BjornConstants.Servos.LIFT_OFFSET);
-        if (lift2 != null)
-            lift2.setPosition(position + BjornConstants.Servos.LIFT2_OFFSET);
+        // Do we want to reset Turret encoder too? Probably.
+        turret.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        turret.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
     }
 
     public double getBatteryVoltage() {
