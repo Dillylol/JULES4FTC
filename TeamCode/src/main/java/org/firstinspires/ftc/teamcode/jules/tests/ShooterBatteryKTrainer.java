@@ -5,7 +5,7 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 
 import org.firstinspires.ftc.teamcode.common.BjornConstants;
 import org.firstinspires.ftc.teamcode.common.BjornHardware;
-import org.firstinspires.ftc.teamcode.jules.shot.ShooterController;
+import org.firstinspires.ftc.teamcode.common.shooter.ShooterController;
 
 /**
  * Linear OpMode that estimates the shooter battery compensation slope (K) by

@@ -1,0 +1,19 @@
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+A problem occurred configuring root project 'JULES4FTC'.
+> Could not resolve all artifacts for configuration ':classpath'.
+   > Could not resolve com.android.tools.build:gradle:8.7.0.
+     Required by:
+         project :
+      > Dependency requires at least JVM runtime version 11. This build uses a Java 8 JVM.
+
+* Try:
+> Run this build using a Java 11 or newer JVM.
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 2s

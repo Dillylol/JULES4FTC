@@ -40,10 +40,10 @@ public class EncBot {
     private static final String MOTOR_RF = "rf";
     private static final String MOTOR_RR = "rr";
 
-    // Directions from your driveConstants (all REVERSE)
-    private static final DcMotorSimple.Direction DIR_LF = DcMotorSimple.Direction.FORWARD;
+    // Directions from your driveConstants (Front Reversed, Back Forward)
+    private static final DcMotorSimple.Direction DIR_LF = DcMotorSimple.Direction.REVERSE;
     private static final DcMotorSimple.Direction DIR_LR = DcMotorSimple.Direction.FORWARD;
-    private static final DcMotorSimple.Direction DIR_RF = DcMotorSimple.Direction.FORWARD;
+    private static final DcMotorSimple.Direction DIR_RF = DcMotorSimple.Direction.REVERSE;
     private static final DcMotorSimple.Direction DIR_RR = DcMotorSimple.Direction.FORWARD;
 
     // Odometry encoders mapping & directions from localizerConstants
