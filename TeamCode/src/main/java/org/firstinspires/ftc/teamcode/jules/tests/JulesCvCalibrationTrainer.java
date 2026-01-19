@@ -17,7 +17,6 @@ import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesStreamBus;
 import org.firstinspires.ftc.teamcode.jules.bridge.util.GsonCompat;
 import org.firstinspires.ftc.teamcode.jules.cv.AprilTagCamera;
-import org.firstinspires.ftc.teamcode.common.shooter.ShooterController;
 import org.firstinspires.ftc.teamcode.jules.shot.ShotTrainerSettings;
 import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 
