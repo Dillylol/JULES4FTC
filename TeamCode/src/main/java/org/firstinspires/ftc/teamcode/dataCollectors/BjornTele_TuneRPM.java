@@ -21,8 +21,8 @@ public class BjornTele_TuneRPM extends OpMode {
     private DcMotor FrontL, FrontR, BackL, BackR;
 
     // ---------- MECHS ----------
-    private DcMotorEx Intake, Wheel, Wheel2;   // read velocity from Wheel
-    private Servo Lift;
+    private DcMotorEx Intake, Wheel, Wheel2; // read velocity from Wheel
+    private Servo Boot;
     private DistanceSensor tofFront;
 
     // ---------- AUX ----------
@@ -30,8 +30,8 @@ public class BjornTele_TuneRPM extends OpMode {
     private IMU imu;
 
     // ---------- ENCODER / GEARING ----------
-    private static final double MOTOR_CPR = 28.0;     // built-in
-    private static final double WHEEL_RATIO = 1.0;    // set yours
+    private static final double MOTOR_CPR = 28.0; // built-in
+    private static final double WHEEL_RATIO = 1.0; // set yours
     private static final double WHEEL_TPR = MOTOR_CPR * WHEEL_RATIO; // 28 for 1:1
 
     // ---------- FLYWHEEL (manual only in this tuner) ----------
@@ -46,12 +46,12 @@ public class BjornTele_TuneRPM extends OpMode {
     private double lastSampleTime = 0.0;
     private static final double DROP_RPM_PER_S = 1500.0; // tune: sudden drop threshold
     private static final double MIN_RPM_FOR_DETECT = 1200.0;
-    private static final double REFRACTORY_MS = 700.0;  // ignore repeats for this long
+    private static final double REFRACTORY_MS = 700.0; // ignore repeats for this long
     private double lastLaunchTime = -9999;
 
     // ---------- FALSE-POSITIVE SUPPRESSOR (spin-up warmup) ----------
-    private static final double WARMUP_MS = 5000.0;   // disable detection for 5s after B turns wheel ON
-    private double spinupStartTime = -1.0;            // runtime() when wheel was toggled ON
+    private static final double WARMUP_MS = 5000.0; // disable detection for 5s after B turns wheel ON
+    private double spinupStartTime = -1.0; // runtime() when wheel was toggled ON
 
     // ---------- PENDING REVIEW (Yes/No poll after each accounted throw) ----------
     private boolean reviewPending = false;
@@ -74,19 +74,20 @@ public class BjornTele_TuneRPM extends OpMode {
     // ---------- BUTTON EDGE ----------
     private boolean rbPrev, lbPrev, dupPrev, ddownPrev, yPrev, aPrev, xPrev, bPrev, startPrev, backPrev;
 
-    @Override public void init() {
+    @Override
+    public void init() {
         telemetry.setMsTransmissionInterval(50);
 
         // Motors match your existing map
         FrontL = hardwareMap.get(DcMotor.class, "lf");
         FrontR = hardwareMap.get(DcMotor.class, "rf");
-        BackL  = hardwareMap.get(DcMotor.class, "lr");
-        BackR  = hardwareMap.get(DcMotor.class, "rr");
+        BackL = hardwareMap.get(DcMotor.class, "lr");
+        BackR = hardwareMap.get(DcMotor.class, "rr");
 
         Intake = hardwareMap.get(DcMotorEx.class, "Intake");
-        Wheel  = hardwareMap.get(DcMotorEx.class, "Wheel");
+        Wheel = hardwareMap.get(DcMotorEx.class, "Wheel");
         Wheel2 = hardwareMap.get(DcMotorEx.class, "Wheel2");
-        Lift   = hardwareMap.get(Servo.class, "Lift");
+        Boot = hardwareMap.get(Servo.class, "boot");
         tofFront = hardwareMap.get(DistanceSensor.class, "TOF");
 
         // Directions (copying your pattern)
@@ -112,8 +113,11 @@ public class BjornTele_TuneRPM extends OpMode {
         Wheel.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         Wheel2.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
 
-        // No lift motion in init
-        try { Lift.setPosition(0.10); } catch (Exception ignored) {}
+        // No boot motion in init
+        try {
+            Boot.setPosition(0.10);
+        } catch (Exception ignored) {
+        }
 
         // IMU present but not used for drive math (robot-centric requested).
         imu = hardwareMap.get(IMU.class, "imu");
@@ -126,11 +130,12 @@ public class BjornTele_TuneRPM extends OpMode {
         panels.update();
     }
 
-    @Override public void loop() {
+    @Override
+    public void loop() {
         // ---------- 1) ROBOT-CENTRIC MECANUM ----------
-        double y  = -gamepad1.left_stick_y;  // forward
-        double x  =  gamepad1.left_stick_x;  // strafe
-        double rx =  gamepad1.right_stick_x; // rotate
+        double y = -gamepad1.left_stick_y; // forward
+        double x = gamepad1.left_stick_x; // strafe
+        double rx = gamepad1.right_stick_x; // rotate
 
         double denom = Math.max(1.0, Math.abs(y) + Math.abs(x) + Math.abs(rx));
         double fl = (y + x + rx) / denom;
@@ -143,17 +148,18 @@ public class BjornTele_TuneRPM extends OpMode {
         FrontR.setPower(fr);
         BackR.setPower(br);
 
-        // ---------- 2) INTAKE (hold-to-run; off otherwise; suppressed during review) ----------
+        // ---------- 2) INTAKE (hold-to-run; off otherwise; suppressed during review)
+        // ----------
         if (reviewPending) {
             // While the Yes/No poll is up, keep intake off so A can safely mean "No"
             Intake.setPower(0.0);
         } else {
             if (gamepad1.a && !gamepad1.x) {
-                Intake.setPower(+1.0);   // hold A to intake forward
+                Intake.setPower(+1.0); // hold A to intake forward
             } else if (gamepad1.x && !gamepad1.a) {
-                Intake.setPower(-1.0);   // hold X to intake reverse
+                Intake.setPower(-1.0); // hold X to intake reverse
             } else {
-                Intake.setPower(0.0);    // neither pressed => off
+                Intake.setPower(0.0); // neither pressed => off
             }
         }
 
@@ -167,13 +173,29 @@ public class BjornTele_TuneRPM extends OpMode {
                 spinupStartTime = -1.0; // stop: cancel warmup
             } else {
                 holdRPM(targetWheelRPM);
-                spinupStartTime = now;   // start 5s warmup window
+                spinupStartTime = now; // start 5s warmup window
             }
         }
-        if (edgeDownRB()) { adjustTarget(STEP_FINE);  if (isOn()) holdRPM(targetWheelRPM); }
-        if (edgeDownLB()) { adjustTarget(-STEP_FINE); if (isOn()) holdRPM(targetWheelRPM); }
-        if (edgeDownDUp())   { adjustTarget(STEP_COARSE);  if (isOn()) holdRPM(targetWheelRPM); }
-        if (edgeDownDDown()) { adjustTarget(-STEP_COARSE); if (isOn()) holdRPM(targetWheelRPM); }
+        if (edgeDownRB()) {
+            adjustTarget(STEP_FINE);
+            if (isOn())
+                holdRPM(targetWheelRPM);
+        }
+        if (edgeDownLB()) {
+            adjustTarget(-STEP_FINE);
+            if (isOn())
+                holdRPM(targetWheelRPM);
+        }
+        if (edgeDownDUp()) {
+            adjustTarget(STEP_COARSE);
+            if (isOn())
+                holdRPM(targetWheelRPM);
+        }
+        if (edgeDownDDown()) {
+            adjustTarget(-STEP_COARSE);
+            if (isOn())
+                holdRPM(targetWheelRPM);
+        }
 
         // ---------- 4) MEASUREMENTS ----------
         final double wheelTps = safeAssemblyVel();
@@ -220,14 +242,14 @@ public class BjornTele_TuneRPM extends OpMode {
             if (edgeDownY()) {
                 // commit staged values to regressions
                 n_req++;
-                Sx_req  += pDistFt;
-                Sy_req  += pRequiredRPM;
+                Sx_req += pDistFt;
+                Sy_req += pRequiredRPM;
                 Sxx_req += pDistFt * pDistFt;
                 Sxy_req += pDistFt * pRequiredRPM;
 
                 n_err++;
-                Sx_err  += pDistFt;
-                Sy_err  += pErrorRPM;
+                Sx_err += pDistFt;
+                Sy_err += pErrorRPM;
                 Sxx_err += pDistFt * pDistFt;
                 Sxy_err += pDistFt * pErrorRPM;
 
@@ -249,13 +271,16 @@ public class BjornTele_TuneRPM extends OpMode {
 
         // ---------- 6) QUICK CONTROLS ----------
         // START = clear all samples
-        if (edgeDownStart()) { clearFits(); }
+        if (edgeDownStart()) {
+            clearFits();
+        }
         // BACK = re-apply current fit to set target live (optional convenience)
         if (edgeDownBack() && n_req >= 2 && !Double.isNaN(distFt)) {
             double m = slope(n_req, Sx_req, Sy_req, Sxx_req, Sxy_req);
             double b = intercept(n_req, Sx_req, Sy_req, m);
             targetWheelRPM = clamp(b + m * distFt, RPM_MIN, RPM_MAX);
-            if (isOn()) holdRPM(targetWheelRPM);
+            if (isOn())
+                holdRPM(targetWheelRPM);
         }
 
         // ---------- 7) TELEMETRY ----------
@@ -286,7 +311,8 @@ public class BjornTele_TuneRPM extends OpMode {
             telemetry.addData("staged_req_rpm", String.format("%.0f", pRequiredRPM));
             telemetry.addData("staged_err_rpm", String.format("%.0f", pErrorRPM));
         }
-        telemetry.addLine("Controls: B=toggle wheel | RB/LB=±25 | Dpad U/D=±100 | START=clear | BACK=apply fit to current distance");
+        telemetry.addLine(
+                "Controls: B=toggle wheel | RB/LB=±25 | Dpad U/D=±100 | START=clear | BACK=apply fit to current distance");
         telemetry.update();
 
         panels.addData("RPM_tgt", targetWheelRPM);
@@ -308,7 +334,10 @@ public class BjornTele_TuneRPM extends OpMode {
     }
 
     // ---------- Helpers ----------
-    private boolean isOn() { return isMotorActive(Wheel) || isMotorActive(Wheel2); }
+    private boolean isOn() {
+        return isMotorActive(Wheel) || isMotorActive(Wheel2);
+    }
+
     private boolean isMotorActive(DcMotorEx motor) {
         if (motor == null) {
             return false;
@@ -319,6 +348,7 @@ public class BjornTele_TuneRPM extends OpMode {
             return false;
         }
     }
+
     private void holdRPM(double rpm) {
         ensureRunUsingEncoder(Wheel);
         ensureRunUsingEncoder(Wheel2);
@@ -327,6 +357,7 @@ public class BjornTele_TuneRPM extends OpMode {
         double tps = (rpm / 60.0) * WHEEL_TPR * scale;
         setWheelVelocity(tps);
     }
+
     private void setWheelPower(double power) {
         setPowerSafe(Wheel, power);
         setPowerSafe(Wheel2, power);
@@ -353,7 +384,11 @@ public class BjornTele_TuneRPM extends OpMode {
         if (m == null) {
             return 0.0;
         }
-        try { return m.getVelocity(); } catch (Exception e) { return 0.0; }
+        try {
+            return m.getVelocity();
+        } catch (Exception e) {
+            return 0.0;
+        }
     }
 
     private static void setPowerSafe(DcMotorEx motor, double power) {
@@ -375,51 +410,129 @@ public class BjornTele_TuneRPM extends OpMode {
         } catch (Exception ignored) {
         }
     }
-    private static double toRPM(double tps, double tpr) { return (tpr <= 0) ? 0.0 : (tps / tpr) * 60.0; }
-    private static double clamp(double v, double lo, double hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    private static double toRPM(double tps, double tpr) {
+        return (tpr <= 0) ? 0.0 : (tps / tpr) * 60.0;
+    }
+
+    private static double clamp(double v, double lo, double hi) {
+        return Math.max(lo, Math.min(hi, v));
+    }
+
     private double getBatteryVoltage() {
         double min = Double.POSITIVE_INFINITY;
         for (VoltageSensor s : hardwareMap.getAll(VoltageSensor.class)) {
             double v = s.getVoltage();
-            if (v > 0) min = Math.min(min, v);
+            if (v > 0)
+                min = Math.min(min, v);
         }
         return (min == Double.POSITIVE_INFINITY) ? 0.0 : min;
     }
+
     private static double safeTofInches(DistanceSensor ds) {
         try {
             double d = ds.getDistance(DistanceUnit.INCH);
             return (Double.isNaN(d) || d <= 0) ? -1.0 : d;
-        } catch (Exception e) { return -1.0; }
+        } catch (Exception e) {
+            return -1.0;
+        }
     }
 
-    private void adjustTarget(double delta) { targetWheelRPM = clamp(targetWheelRPM + delta, RPM_MIN, RPM_MAX); }
+    private void adjustTarget(double delta) {
+        targetWheelRPM = clamp(targetWheelRPM + delta, RPM_MIN, RPM_MAX);
+    }
+
     private void clearFits() {
-        n_req = 0; Sx_req = Sy_req = Sxx_req = Sxy_req = 0;
-        n_err = 0; Sx_err = Sy_err = Sxx_err = Sxy_err = 0;
+        n_req = 0;
+        Sx_req = Sy_req = Sxx_req = Sxy_req = 0;
+        n_err = 0;
+        Sx_err = Sy_err = Sxx_err = Sxy_err = 0;
         samplesKept = samplesIgnored = 0;
         clearPending();
     }
+
     private void clearPending() {
         reviewPending = false;
         pDistFt = pRequiredRPM = pErrorRPM = pWheelRpmAtDetect = Double.NaN;
     }
+
     private static double slope(long n, double Sx, double Sy, double Sxx, double Sxy) {
         double denom = n * Sxx - Sx * Sx;
         return (denom == 0) ? Double.NaN : (n * Sxy - Sx * Sy) / denom;
     }
+
     private static double intercept(long n, double Sx, double Sy, double m) {
         return Double.isNaN(m) ? Double.NaN : (Sy - m * Sx) / n;
     }
 
     // Button edges
-    private boolean edgeDownRB(){ boolean now=gamepad1.right_bumper; boolean r=now && !rbPrev; rbPrev=now; return r; }
-    private boolean edgeDownLB(){ boolean now=gamepad1.left_bumper;  boolean r=now && !lbPrev; lbPrev=now; return r; }
-    private boolean edgeDownDUp(){ boolean now=gamepad1.dpad_up;     boolean r=now && !dupPrev; dupPrev=now; return r; }
-    private boolean edgeDownDDown(){ boolean now=gamepad1.dpad_down; boolean r=now && !ddownPrev; ddownPrev=now; return r; }
-    private boolean edgeDownY(){ boolean now=gamepad1.y; boolean r=now && !yPrev; yPrev=now; return r; }
-    private boolean edgeDownA(){ boolean now=gamepad1.a; boolean r=now && !aPrev; aPrev=now; return r; }
-    private boolean edgeDownX(){ boolean now=gamepad1.x; boolean r=now && !xPrev; xPrev=now; return r; }
-    private boolean edgeDownB(){ boolean now=gamepad1.b; boolean r=now && !bPrev; bPrev=now; return r; }
-    private boolean edgeDownStart(){ boolean now=gamepad1.start; boolean r=now && !startPrev; startPrev=now; return r; }
-    private boolean edgeDownBack(){ boolean now=gamepad1.back; boolean r=now && !backPrev; backPrev=now; return r; }
+    private boolean edgeDownRB() {
+        boolean now = gamepad1.right_bumper;
+        boolean r = now && !rbPrev;
+        rbPrev = now;
+        return r;
+    }
+
+    private boolean edgeDownLB() {
+        boolean now = gamepad1.left_bumper;
+        boolean r = now && !lbPrev;
+        lbPrev = now;
+        return r;
+    }
+
+    private boolean edgeDownDUp() {
+        boolean now = gamepad1.dpad_up;
+        boolean r = now && !dupPrev;
+        dupPrev = now;
+        return r;
+    }
+
+    private boolean edgeDownDDown() {
+        boolean now = gamepad1.dpad_down;
+        boolean r = now && !ddownPrev;
+        ddownPrev = now;
+        return r;
+    }
+
+    private boolean edgeDownY() {
+        boolean now = gamepad1.y;
+        boolean r = now && !yPrev;
+        yPrev = now;
+        return r;
+    }
+
+    private boolean edgeDownA() {
+        boolean now = gamepad1.a;
+        boolean r = now && !aPrev;
+        aPrev = now;
+        return r;
+    }
+
+    private boolean edgeDownX() {
+        boolean now = gamepad1.x;
+        boolean r = now && !xPrev;
+        xPrev = now;
+        return r;
+    }
+
+    private boolean edgeDownB() {
+        boolean now = gamepad1.b;
+        boolean r = now && !bPrev;
+        bPrev = now;
+        return r;
+    }
+
+    private boolean edgeDownStart() {
+        boolean now = gamepad1.start;
+        boolean r = now && !startPrev;
+        startPrev = now;
+        return r;
+    }
+
+    private boolean edgeDownBack() {
+        boolean now = gamepad1.back;
+        boolean r = now && !backPrev;
+        backPrev = now;
+        return r;
+    }
 }

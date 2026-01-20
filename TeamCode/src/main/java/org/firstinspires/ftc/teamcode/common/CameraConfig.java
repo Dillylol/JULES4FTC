@@ -2,7 +2,7 @@ package org.firstinspires.ftc.teamcode.common;
 
 /**
  * Centralized camera + AprilTag configuration for the 2024-2025 DECODE field.
- * Values here are placeholders that can be updated after camera calibration.
+ * Tunable values can be edited and will persist during the app session.
  */
 public final class CameraConfig {
 
@@ -16,13 +16,21 @@ public final class CameraConfig {
     public static final int OBELISK_TAG_ID_23 = 23;
     public static final int RED_GOAL_TAG_ID = 24;
 
-    // Camera intrinsics (update once the camera is calibrated)
-    public static final double FX = 765.0;
-    public static final double FY = 765.0;
-    public static final double CX = 320.0;
-    public static final double CY = 240.0;
+    // Camera intrinsics for Logitech C920 at 1280x720
+    // Camera intrinsics for Logitech C920 at 1280x720
+    // Tunable via CameraConfigurables/Dashboard
+    public static double FX = 930.0;
+    public static double FY = 930.0;
+    public static double CX = 640.0;
+    public static double CY = 360.0;
 
-    // FTC tag size (2 inches = 50.8mm)
+    // --- Tunable Camera Settings (Updated by CV Tuner) ---
+    // Recommended for 30fps: Exposure=6, Gain=250, Decimation=3
+    public static int TUNED_EXPOSURE = 6; // Lower = less blur, darker
+    public static int TUNED_GAIN = 250; // Higher = brighter, more noise
+    public static int TUNED_DECIMATION = 3; // 3=30fps, 2=22fps, 1=10fps
+
+    // FTC tag size (6.5 inches)
     public static final double TAG_SIZE_METERS = 0.165;
 
     public static final String CLASS_BLUE_GOAL = "blue_goal";
@@ -50,4 +58,3 @@ public final class CameraConfig {
         return id == BLUE_GOAL_TAG_ID || id == RED_GOAL_TAG_ID;
     }
 }
-

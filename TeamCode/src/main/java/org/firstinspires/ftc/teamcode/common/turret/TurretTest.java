@@ -1,9 +1,8 @@
-package org.firstinspires.ftc.teamcode.steele27303;
+package org.firstinspires.ftc.teamcode.common.turret;
 
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import org.firstinspires.ftc.teamcode.common.BjornHardware;
-import org.firstinspires.ftc.teamcode.common.BjornConstants;
 
 @TeleOp(name = "TurretTest", group = "Test")
 public class TurretTest extends LinearOpMode {

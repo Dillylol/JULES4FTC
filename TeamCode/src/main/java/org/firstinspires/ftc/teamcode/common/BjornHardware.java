@@ -30,7 +30,7 @@ public final class BjornHardware {
     public final DcMotorEx turret;
     public final CRServo grip1;
     public final CRServo grip2;
-    public final CRServo boot;
+    // public final CRServo boot; // Removed
     public final DigitalChannel led1Green;
     public final DigitalChannel led1Red;
     public final DigitalChannel led2Green;
@@ -39,39 +39,42 @@ public final class BjornHardware {
     public final DigitalChannel brake2Green, brake2Red;
     public final DistanceSensor frontTof;
     public final IMU imu;
+    // Boot
+    public final Servo boot; // Renamed from lift
     public final VoltageSensor batterySensor; // Can be null in some configs, but usually filtered
 
     private double lastTurretPos = 0.0;
-    
+
     // REV UltraPlanetary HD Hex Motor Specs
     // Base counts per revolution at the motor
     private static final double MOTOR_TICKS_PER_REV = 28.0;
-    
+
     // User Configuration:
-    // Cartridge 1: 5:1
-    // Cartridge 2: 4:1
-    // External Assembly: 4:1
-    // Total = 5 * 4 * 4 = 80:1
-    private static final double TURRET_GEAR_REDUCTION = 5.0 * 4.0 * 4.0; 
-    
-    public static final double TURRET_TICKS_PER_DEGREE = (MOTOR_TICKS_PER_REV * TURRET_GEAR_REDUCTION) / 360.0; 
+    // Cartridge 1: 5:1 (Actual: 5.23:1)
+    // Cartridge 2: 4:1 (Actual: 3.61:1)
+    // External Assembly: 4:1 (80T/20T)
+    // Total = 5.23 * 3.61 * 4 = 75.52:1
+    private static final double TURRET_GEAR_REDUCTION = 75.52;
+
+    public static final double TURRET_TICKS_PER_DEGREE = (MOTOR_TICKS_PER_REV * TURRET_GEAR_REDUCTION) / 360.0;
 
     private BjornHardware(HardwareMap map) {
         frontLeft = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.FRONT_LEFT), BjornConstants.GearRatios.DRIVE);
         frontRight = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.FRONT_RIGHT), BjornConstants.GearRatios.DRIVE);
         backLeft = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.BACK_LEFT), BjornConstants.GearRatios.DRIVE);
         backRight = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.BACK_RIGHT), BjornConstants.GearRatios.DRIVE);
-        
+
         intake = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.INTAKE), BjornConstants.GearRatios.INTAKE);
         wheel = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.WHEEL), BjornConstants.GearRatios.WHEEL);
         wheel2 = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.WHEEL2), BjornConstants.GearRatios.WHEEL);
         turret = wrap(map.get(DcMotorEx.class, BjornConstants.Motors.TURRET), BjornConstants.GearRatios.TURRET);
-        
+
         grip1 = map.get(CRServo.class, BjornConstants.Motors.GRIP1);
         grip2 = map.get(CRServo.class, BjornConstants.Motors.GRIP2);
-        
-        boot = map.get(CRServo.class, BjornConstants.Motors.BOOT);
-        boot.setDirection(CRServo.Direction.FORWARD); // Flip rotation as requested
+
+        // Boot Removed
+        // boot = map.get(CRServo.class, BjornConstants.Motors.BOOT);
+        // boot.setDirection(CRServo.Direction.FORWARD);
 
         led1Green = map.get(DigitalChannel.class, "led1_green");
         led1Red = map.get(DigitalChannel.class, "led1_red");
@@ -93,14 +96,19 @@ public final class BjornHardware {
         brake1Red.setMode(DigitalChannel.Mode.OUTPUT);
         brake2Green.setMode(DigitalChannel.Mode.OUTPUT);
         brake2Red.setMode(DigitalChannel.Mode.OUTPUT);
-        
+
         // Default to Green (Not Braking)
-        brake1Green.setState(true); brake1Red.setState(false);
-        brake2Green.setState(true); brake2Red.setState(false);
+        brake1Green.setState(true);
+        brake1Red.setState(false);
+        brake2Green.setState(true);
+        brake2Red.setState(false);
 
         frontTof = map.get(DistanceSensor.class, BjornConstants.Sensors.TOF_FRONT);
         imu = map.get(IMU.class, BjornConstants.Sensors.IMU);
-        
+
+        // Boot
+        boot = map.get(Servo.class, "boot");
+
         IMU.Parameters parameters = new IMU.Parameters(new RevHubOrientationOnRobot(
                 RevHubOrientationOnRobot.LogoFacingDirection.LEFT,
                 RevHubOrientationOnRobot.UsbFacingDirection.UP));
@@ -108,19 +116,20 @@ public final class BjornHardware {
 
         batterySensor = firstVoltageSensor(map);
 
-        // Init Estimator: Assume 0 degrees at start, with 0 uncertainty (Hardware Reset)
+        // Init Estimator: Assume 0 degrees at start, with 0 uncertainty (Hardware
+        // Reset)
         turretEstimator = new org.firstinspires.ftc.teamcode.common.turret.TurretEstimator(0.0, 0.0);
     }
-    
+
     public void updateEstimator() {
         double currentPos = turret.getCurrentPosition();
         double deltaTicks = currentPos - lastTurretPos;
         lastTurretPos = currentPos;
-        
+
         double deltaDeg = deltaTicks / TURRET_TICKS_PER_DEGREE;
         turretEstimator.predict(deltaDeg);
     }
-    
+
     /**
      * Call this when Camera sees a tag to correct belief
      */
@@ -167,7 +176,6 @@ public final class BjornHardware {
         backRight.setZeroPowerBehavior(BjornConstants.Motors.DRIVE_ZERO_POWER);
     }
     // configureDriveMotor helper removed as it's no longer generic
-
 
     private void configureMechanisms() {
         intake.setDirection(BjornConstants.Motors.INTAKE_DIRECTION);

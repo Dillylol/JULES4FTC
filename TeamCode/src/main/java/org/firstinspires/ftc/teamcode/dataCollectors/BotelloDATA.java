@@ -22,8 +22,8 @@ public class BotelloDATA extends OpMode {
     // Mechanisms (use DcMotorEx so we can read velocity)
     private DcMotorEx Intake, Wheel, Wheel2;
 
-    // Auto-lift servo (stays lowered, lifts only when wheel velocity >= threshold)
-    private Servo Lift;
+    // Auto-boot servo (stays lowered, kicks only when wheel velocity >= threshold)
+    private Servo Boot;
 
     // Panels telemetry
     private final Telemetry panels = PanelsTelemetry.INSTANCE.getFtcTelemetry();
@@ -32,55 +32,56 @@ public class BotelloDATA extends OpMode {
     private IMU imu;
 
     // Toggles
-    private boolean isWheelOn  = false;   // B toggles this
+    private boolean isWheelOn = false; // B toggles this
     private boolean bWasPressed = false;
 
     // Button edges for tuning
-    private boolean rbPrev=false, lbPrev=false, duPrev=false, ddPrev=false, dlPrev=false, drPrev=false, startPrev=false;
+    private boolean rbPrev = false, lbPrev = false, duPrev = false, ddPrev = false, dlPrev = false, drPrev = false,
+            startPrev = false;
 
     // REV-41-1600 (28 CPR) * gear ratio => ticks per output revolution
     private static final double MOTOR_ENCODER_CPR = 28.0;
     private static final double INTAKE_GEAR_RATIO = 20.0; // TODO: set yours
-    private static final double WHEEL_GEAR_RATIO  = 1.0;  // TODO: set yours
+    private static final double WHEEL_GEAR_RATIO = 1.0; // TODO: set yours
 
     private static final double INTAKE_TPR = MOTOR_ENCODER_CPR * INTAKE_GEAR_RATIO; // 560 for 20:1
-    private static final double WHEEL_TPR  = MOTOR_ENCODER_CPR * WHEEL_GEAR_RATIO;  // 28 for 1:1
+    private static final double WHEEL_TPR = MOTOR_ENCODER_CPR * WHEEL_GEAR_RATIO; // 28 for 1:1
 
     // ===== Servo config =====
-    private static final double LIFT_LOWERED_POS = 0.10; // resting (default)
-    private static final double LIFT_RAISED_POS  = 0.85; // raised only when wheel is fast enough
+    private static final double BOOT_STOW_POS = 0.0; // resting (default)
+    private static final double BOOT_KICK_POS = 0.5; // extended only when wheel is fast enough
 
-    // Velocity thresholds for lift hysteresis (RPM -> TPS)
-    private static final double LIFT_ON_RPM  = 2000.0;  // raise at/above this wheel speed
-    private static final double LIFT_OFF_RPM = 1500.0;  // lower at/below this wheel speed
-    private static final double LIFT_ON_TPS  = (LIFT_ON_RPM / 60.0) * WHEEL_TPR;
-    private static final double LIFT_OFF_TPS = (LIFT_OFF_RPM / 60.0) * WHEEL_TPR;
+    // Velocity thresholds for boot hysteresis (RPM -> TPS)
+    private static final double BOOT_ON_RPM = 2000.0; // extend at/above this wheel speed
+    private static final double BOOT_OFF_RPM = 1500.0; // retract at/below this wheel speed
+    private static final double BOOT_ON_TPS = (BOOT_ON_RPM / 60.0) * WHEEL_TPR;
+    private static final double BOOT_OFF_TPS = (BOOT_OFF_RPM / 60.0) * WHEEL_TPR;
 
-    private boolean liftIsRaised = false; // track last servo state for hysteresis
+    private boolean bootIsExtended = false; // track last servo state for hysteresis
 
     // ===== Tunable RPM hold =====
-    private double targetWheelRPM = 3550.0;     // starting setpoint (under-load target)
-    private static final double STEP_SMALL = 25;   // RB/LB
-    private static final double STEP_MED   = 100;  // DPAD L/R
-    private static final double STEP_BIG   = 250;  // DPAD U/D
-    private static final double RPM_MIN    = 0.0;
-    private static final double RPM_MAX    = 6000.0; // sanity clamp
+    private double targetWheelRPM = 3550.0; // starting setpoint (under-load target)
+    private static final double STEP_SMALL = 25; // RB/LB
+    private static final double STEP_MED = 100; // DPAD L/R
+    private static final double STEP_BIG = 250; // DPAD U/D
+    private static final double RPM_MIN = 0.0;
+    private static final double RPM_MAX = 6000.0; // sanity clamp
 
     @Override
     public void init() {
         // Map drive
-        BackL  = hardwareMap.get(DcMotor.class, "lr");
-        BackR  = hardwareMap.get(DcMotor.class, "rr");
+        BackL = hardwareMap.get(DcMotor.class, "lr");
+        BackR = hardwareMap.get(DcMotor.class, "rr");
         FrontL = hardwareMap.get(DcMotor.class, "lf");
         FrontR = hardwareMap.get(DcMotor.class, "rf");
 
         // Map mechanisms as DcMotorEx
         Intake = hardwareMap.get(DcMotorEx.class, "Intake");
-        Wheel  = hardwareMap.get(DcMotorEx.class, "Wheel");
+        Wheel = hardwareMap.get(DcMotorEx.class, "Wheel");
         Wheel2 = hardwareMap.get(DcMotorEx.class, "Wheel2");
 
         // Map servo
-        Lift   = hardwareMap.get(Servo.class, "Lift");
+        Boot = hardwareMap.get(Servo.class, "boot");
 
         // Directions
         FrontL.setDirection(DcMotor.Direction.REVERSE);
@@ -99,7 +100,8 @@ public class BotelloDATA extends OpMode {
         BackL.setZeroPowerBehavior(brake);
         BackR.setZeroPowerBehavior(brake);
         Intake.setZeroPowerBehavior(brake);
-        // Wheel: RUN_USING_ENCODER + setVelocity handles holding; BRAKE is fine here too
+        // Wheel: RUN_USING_ENCODER + setVelocity handles holding; BRAKE is fine here
+        // too
         Wheel.setZeroPowerBehavior(brake);
         Wheel2.setZeroPowerBehavior(brake);
 
@@ -113,8 +115,8 @@ public class BotelloDATA extends OpMode {
         // Wheel.setVelocityPIDFCoefficients(kP, kI, kD, kF);
 
         // Servo default
-        Lift.setPosition(LIFT_LOWERED_POS);
-        liftIsRaised = false;
+        Boot.setPosition(BOOT_STOW_POS);
+        bootIsExtended = false;
 
         // IMU setup
         imu = hardwareMap.get(IMU.class, "imu");
@@ -136,9 +138,9 @@ public class BotelloDATA extends OpMode {
         duPrev = gamepad1.dpad_up;
 
         // Field-centric drive
-        double y  = -gamepad1.left_stick_y;
-        double x  =  gamepad1.left_stick_x * 1.1; // compensate strafing
-        double rx =  gamepad1.right_stick_x;
+        double y = -gamepad1.left_stick_y;
+        double x = gamepad1.left_stick_x * 1.1; // compensate strafing
+        double rx = gamepad1.right_stick_x;
 
         double heading = imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS);
 
@@ -151,8 +153,10 @@ public class BotelloDATA extends OpMode {
         double fr = (rotY - rotX - rx) / denom;
         double br = (rotY + rotX - rx) / denom;
 
-        FrontL.setPower(fl);  FrontR.setPower(fr);
-        BackL.setPower(bl);   BackR.setPower(br);
+        FrontL.setPower(fl);
+        FrontR.setPower(fr);
+        BackL.setPower(bl);
+        BackR.setPower(br);
 
         // ===== Mechanisms =====
         // (1) Intake control: A = normal intake, X = reverse, else off
@@ -160,68 +164,76 @@ public class BotelloDATA extends OpMode {
         Intake.setPower(intakeCmd);
 
         // (2) Wheel toggle on B:
-        if (gamepad1.b && !bWasPressed) isWheelOn = !isWheelOn;
+        if (gamepad1.b && !bWasPressed)
+            isWheelOn = !isWheelOn;
         bWasPressed = gamepad1.b;
 
         // ===== Tunable RPM setpoint (edge-detected) =====
         // RB/LB: ±25
-        if (gamepad1.right_bumper && !rbPrev) adjustTargetRPM(+STEP_SMALL);
-        if (gamepad1.left_bumper  && !lbPrev) adjustTargetRPM(-STEP_SMALL);
+        if (gamepad1.right_bumper && !rbPrev)
+            adjustTargetRPM(+STEP_SMALL);
+        if (gamepad1.left_bumper && !lbPrev)
+            adjustTargetRPM(-STEP_SMALL);
         rbPrev = gamepad1.right_bumper;
         lbPrev = gamepad1.left_bumper;
 
         // DPad Right/Left: ±100
-        if (gamepad1.dpad_right && !drPrev) adjustTargetRPM(+STEP_MED);
-        if (gamepad1.dpad_left  && !dlPrev) adjustTargetRPM(-STEP_MED);
+        if (gamepad1.dpad_right && !drPrev)
+            adjustTargetRPM(+STEP_MED);
+        if (gamepad1.dpad_left && !dlPrev)
+            adjustTargetRPM(-STEP_MED);
         drPrev = gamepad1.dpad_right;
         dlPrev = gamepad1.dpad_left;
 
         // DPad Up/Down: ±250
-        if (gamepad1.dpad_up && !duPrev)   adjustTargetRPM(+STEP_BIG);
-        if (gamepad1.dpad_down && !ddPrev) adjustTargetRPM(-STEP_BIG);
+        if (gamepad1.dpad_up && !duPrev)
+            adjustTargetRPM(+STEP_BIG);
+        if (gamepad1.dpad_down && !ddPrev)
+            adjustTargetRPM(-STEP_BIG);
         ddPrev = gamepad1.dpad_down;
 
         // START: snap to preset (useful between cycles)
-        if (gamepad1.start && !startPrev) targetWheelRPM = 3550.0;
+        if (gamepad1.start && !startPrev)
+            targetWheelRPM = 3550.0;
         startPrev = gamepad1.start;
 
         // ===== Apply hold or stop =====
-        final double wheelTps  = safeAssemblyVel();
-        final double wheelRpm  = toRPM(wheelTps, WHEEL_TPR);
+        final double wheelTps = safeAssemblyVel();
+        final double wheelRpm = toRPM(wheelTps, WHEEL_TPR);
 
         if (isWheelOn) {
             // Ensure RUN_USING_ENCODER for velocity control
             ensureRunUsingEncoder(Wheel);
             ensureRunUsingEncoder(Wheel2);
             double targetTps = (targetWheelRPM / 60.0) * WHEEL_TPR;
-            setWheelVelocity(targetTps);  // built-in PIDF holds TPS
+            setWheelVelocity(targetTps); // built-in PIDF holds TPS
         } else {
             setWheelPower(0.0);
         }
 
-        // ===== Auto-Lift Servo based on Wheel velocity =====
-        if (!liftIsRaised && wheelTps >= LIFT_ON_TPS) {
-            Lift.setPosition(LIFT_RAISED_POS);
-            liftIsRaised = true;
-        } else if (liftIsRaised && wheelTps <= LIFT_OFF_TPS) {
-            Lift.setPosition(LIFT_LOWERED_POS);
-            liftIsRaised = false;
+        // ===== Auto-Boot Servo based on Wheel velocity =====
+        if (!bootIsExtended && wheelTps >= BOOT_ON_TPS) {
+            Boot.setPosition(BOOT_KICK_POS);
+            bootIsExtended = true;
+        } else if (bootIsExtended && wheelTps <= BOOT_OFF_TPS) {
+            Boot.setPosition(BOOT_STOW_POS);
+            bootIsExtended = false;
         }
 
         // Telemetry/graphs
         double intakeTps = safeVel(Intake);
         double intakeRpm = toRPM(intakeTps, INTAKE_TPR);
-        double batteryV  = getBatteryVoltage();
+        double batteryV = getBatteryVoltage();
 
-        panels.addData("Wheel_ON",  isWheelOn);
+        panels.addData("Wheel_ON", isWheelOn);
         panels.addData("Wheel_RPM_target", targetWheelRPM);
-        panels.addData("Wheel_RPM_meas",   wheelRpm);
-        panels.addData("Wheel_TPS_meas",   wheelTps);
-        panels.addData("Intake_RPM",       intakeRpm);
-        panels.addData("Battery_V",        batteryV);
-        panels.addData("Lift_Pos",         Lift.getPosition());
-        panels.addData("LiftRaised",       liftIsRaised);
-        panels.addData("Heading_deg",      Math.toDegrees(heading));
+        panels.addData("Wheel_RPM_meas", wheelRpm);
+        panels.addData("Wheel_TPS_meas", wheelTps);
+        panels.addData("Intake_RPM", intakeRpm);
+        panels.addData("Battery_V", batteryV);
+        panels.addData("Boot_Pos", Boot.getPosition());
+        panels.addData("BootExtended", bootIsExtended);
+        panels.addData("Heading_deg", Math.toDegrees(heading));
         panels.addData("FL_power", fl);
         panels.addData("FR_power", fr);
         panels.addData("BL_power", bl);
@@ -265,7 +277,11 @@ public class BotelloDATA extends OpMode {
         if (m == null) {
             return 0.0;
         }
-        try { return m.getVelocity(); } catch (Exception e) { return 0.0; }
+        try {
+            return m.getVelocity();
+        } catch (Exception e) {
+            return 0.0;
+        }
     }
 
     private static void setVelocitySafe(DcMotorEx motor, double ticksPerSecond) {
@@ -286,7 +302,8 @@ public class BotelloDATA extends OpMode {
         double min = Double.POSITIVE_INFINITY;
         for (VoltageSensor s : hardwareMap.getAll(VoltageSensor.class)) {
             double v = s.getVoltage();
-            if (v > 0) min = Math.min(min, v);
+            if (v > 0)
+                min = Math.min(min, v);
         }
         return (min == Double.POSITIVE_INFINITY) ? 0.0 : min;
     }
