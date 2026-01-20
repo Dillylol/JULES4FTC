@@ -65,17 +65,17 @@ public final class ShooterController {
     private long intakePulseEndNs;
 
     public ShooterController(@Nullable DcMotorEx flywheel,
-                             @Nullable DcMotorEx flywheelSecondary,
-                             @Nullable DcMotorEx intake,
-                             @Nullable Servo lift) {
+            @Nullable DcMotorEx flywheelSecondary,
+            @Nullable DcMotorEx intake,
+            @Nullable Servo lift) {
         this(flywheel, flywheelSecondary, intake, lift, null);
     }
 
     public ShooterController(@Nullable DcMotorEx flywheel,
-                             @Nullable DcMotorEx flywheelSecondary,
-                             @Nullable DcMotorEx intake,
-                             @Nullable Servo lift,
-                             @Nullable VoltageSensor vSensor) {
+            @Nullable DcMotorEx flywheelSecondary,
+            @Nullable DcMotorEx intake,
+            @Nullable Servo lift,
+            @Nullable VoltageSensor vSensor) {
         this.flywheel = flywheel;
         this.flywheelSecondary = flywheelSecondary;
         this.intake = intake;
@@ -325,7 +325,7 @@ public final class ShooterController {
             return;
         }
         try {
-            lift.setPosition(BjornConstants.Servos.LIFT_RAISED);
+            lift.setPosition(BjornConstants.Servos.BOOT_KICK);
         } catch (Exception ignored) {
         }
     }
@@ -335,7 +335,7 @@ public final class ShooterController {
             return;
         }
         try {
-            lift.setPosition(BjornConstants.Servos.LIFT_LOWERED);
+            lift.setPosition(BjornConstants.Servos.BOOT_STOW);
         } catch (Exception ignored) {
         }
     }

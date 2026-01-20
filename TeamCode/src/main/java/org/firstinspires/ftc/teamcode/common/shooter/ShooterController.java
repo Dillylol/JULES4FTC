@@ -31,7 +31,7 @@ public final class ShooterController {
     private static final double DIP_THRESHOLD_RPM = 50.0;
     private static final long DIP_WINDOW_MS = 220L;
     private static final long LOCKOUT_MS = 700L;
-    private static final long LIFT_HOLD_MS = 350L;
+    private static final long BOOT_HOLD_MS = 350L;
     private static final long INTAKE_PULSE_NS = 200_000_000L;
     private static final double RPM_MIN = 1200.0;
     private static final double RPM_MAX = 3000.0;
@@ -42,7 +42,7 @@ public final class ShooterController {
     private final DcMotorEx flywheel;
     private final DcMotorEx flywheelSecondary;
     private final DcMotorEx intake;
-    private final BjornHardware hardware; // Use BjornHardware for lift control
+    private final BjornHardware hardware; // Use BjornHardware for boot control
     @Nullable
     private final VoltageSensor vSensor;
 
@@ -63,7 +63,7 @@ public final class ShooterController {
     private boolean shotDetected;
     private ShotMetrics pendingShot;
 
-    private long liftCloseAtMs;
+    private long bootStowAtMs;
     private long intakePulseEndNs;
     private int rampStartRpm = 0;
     private boolean rampActive = false;
@@ -150,8 +150,9 @@ public final class ShooterController {
     private static final long BOOT_PULSE_MS = 350L; // Default pulse for auto
     public long autoPulseEndMs = 0L; // Made public/accessible or just keep private logic
 
-    // Simplified Logic: Press -> Power 1.0. Release -> Power 0.0 (Let mechanism return).
-    
+    // Simplified Logic: Press -> Power 1.0. Release -> Power 0.0 (Let mechanism
+    // return).
+
     public void update(long nowMs) {
         // ... (existing update logic)
         double measured = readRpm();
@@ -165,20 +166,23 @@ public final class ShooterController {
         serviceIntake();
         serviceBoot(nowMs);
     }
-    
+
     private boolean pulsingIntake = false;
 
     public boolean fire(long nowMs) {
-        return fire(nowMs, true); 
+        return fire(nowMs, true);
     }
-    
+
     // Auto Fire: Pulse for BOOT_PULSE_MS then cut power
-    public void fireBoot(long nowMs) {
-        if (hardware != null && hardware.boot != null) {
-             hardware.boot.setPower(1.0);
-             autoPulseEndMs = nowMs + BOOT_PULSE_MS;
-        }
-    }
+    /*
+     * // Boot Removed
+     * public void fireBoot(long nowMs) {
+     * if (hardware != null && hardware.boot != null) {
+     * hardware.boot.setPower(1.0);
+     * autoPulseEndMs = nowMs + BOOT_PULSE_MS;
+     * }
+     * }
+     */
 
     // Manual: Direct Control
     // extending = true -> Power 1.0
@@ -186,47 +190,19 @@ public final class ShooterController {
     // Manual: Bidirectional Control
     // Retract (Reverse/Unjam) takes priority over Extend.
     public void controlBoot(boolean extend, boolean retract, long nowMs) {
-         if (hardware == null || hardware.boot == null) return;
-         
-         // Manual input overrides Auto Pulse
-         if (extend || retract) {
-             autoPulseEndMs = 0L; 
-         }
-
-         if (retract) {
-             hardware.boot.setPower(-1.0);
-         } else if (extend) {
-             hardware.boot.setPower(1.0);
-         } else {
-             // Only cut power if Auto isn't keeping it busy
-             if (autoPulseEndMs == 0 || nowMs >= autoPulseEndMs) {
-                 hardware.boot.setPower(0.0);
-             }
-         }
+        // Placeholder: logic removed.
+        // In future, this will control the Lift servo.
     }
-    
+
     public void fireBootAuto(long nowMs) {
-        fireBoot(nowMs);
+        // fireBoot(nowMs);
     }
 
     private void serviceBoot(long nowMs) {
-        if (hardware == null || hardware.boot == null) return;
-        
-        // Auto Pulse Handling
-        if (autoPulseEndMs > 0) {
-            if (nowMs >= autoPulseEndMs) {
-                 // Auto Pulse Done -> Cut Power
-                 autoPulseEndMs = 0L;
-                 hardware.boot.setPower(0.0);
-            } else {
-                // Keep Extending
-                hardware.boot.setPower(1.0);
-            }
+        if (bootStowAtMs > 0L && nowMs >= bootStowAtMs) {
+            stowBoot();
+            bootStowAtMs = 0L;
         }
-        // Manual is handled directly in setBootManual calls typically, 
-        // but if setBootManual(false) was called, power is 0. 
-        // If setBootManual(true) was called, power is 1.
-        // We rely on consistent calls to setBootManual in the loop.
     }
 
     public boolean fire(long nowMs, boolean engageIntake) {
@@ -234,7 +210,8 @@ public final class ShooterController {
             return false;
         }
         pulseFeed(engageIntake);
-        fireBoot(nowMs); // Trigger Boot Pulse
+        kickBoot();
+        bootStowAtMs = nowMs + BOOT_HOLD_MS;
         fireCommandMs = nowMs;
         rpmSnapshotAtFire = filteredRpm;
         shotDetected = false;
@@ -398,14 +375,18 @@ public final class ShooterController {
         if (engageIntake && intake != null) {
             try {
                 intake.setPower(1.0);
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
         // Pulse Grips always
         if (hardware != null) {
             try {
-                if (hardware.grip1 != null) hardware.grip1.setPower(1.0);
-                if (hardware.grip2 != null) hardware.grip2.setPower(1.0);
-            } catch (Exception ignored) {}
+                if (hardware.grip1 != null)
+                    hardware.grip1.setPower(1.0);
+                if (hardware.grip2 != null)
+                    hardware.grip2.setPower(1.0);
+            } catch (Exception ignored) {
+            }
         }
         intakePulseEndNs = System.nanoTime() + INTAKE_PULSE_NS;
     }
@@ -414,18 +395,24 @@ public final class ShooterController {
         if (active) {
             if (hardware != null) {
                 try {
-                    if (hardware.grip1 != null) hardware.grip1.setPower(1.0);
-                    if (hardware.grip2 != null) hardware.grip2.setPower(1.0);
-                } catch (Exception ignored) {}
+                    if (hardware.grip1 != null)
+                        hardware.grip1.setPower(1.0);
+                    if (hardware.grip2 != null)
+                        hardware.grip2.setPower(1.0);
+                } catch (Exception ignored) {
+                }
             }
         } else {
             // Only stop if NOT pulsing
             if (intakePulseEndNs == 0L || System.nanoTime() >= intakePulseEndNs) {
-                 if (hardware != null) {
+                if (hardware != null) {
                     try {
-                        if (hardware.grip1 != null) hardware.grip1.setPower(0.0);
-                        if (hardware.grip2 != null) hardware.grip2.setPower(0.0);
-                    } catch (Exception ignored) {}
+                        if (hardware.grip1 != null)
+                            hardware.grip1.setPower(0.0);
+                        if (hardware.grip2 != null)
+                            hardware.grip2.setPower(0.0);
+                    } catch (Exception ignored) {
+                    }
                 }
             }
         }
@@ -437,15 +424,19 @@ public final class ShooterController {
             if (pulsingIntake && intake != null) {
                 try {
                     intake.setPower(0.0);
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                }
             }
             // Stop Grips (Only if we aren't manually feeding)
             // As discussed, simplified: Just stop them.
             if (hardware != null) {
                 try {
-                    if (hardware.grip1 != null) hardware.grip1.setPower(0.0);
-                    if (hardware.grip2 != null) hardware.grip2.setPower(0.0);
-                } catch (Exception ignored) {}
+                    if (hardware.grip1 != null)
+                        hardware.grip1.setPower(0.0);
+                    if (hardware.grip2 != null)
+                        hardware.grip2.setPower(0.0);
+                } catch (Exception ignored) {
+                }
             }
             intakePulseEndNs = 0L;
             pulsingIntake = false;
@@ -480,6 +471,24 @@ public final class ShooterController {
         try {
             motor.setPower(power);
         } catch (Exception ignored) {
+        }
+    }
+
+    private void kickBoot() {
+        if (hardware != null && hardware.boot != null) {
+            try {
+                hardware.boot.setPosition(BjornConstants.Servos.BOOT_KICK);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void stowBoot() {
+        if (hardware != null && hardware.boot != null) {
+            try {
+                hardware.boot.setPosition(BjornConstants.Servos.BOOT_STOW);
+            } catch (Exception ignored) {
+            }
         }
     }
 }

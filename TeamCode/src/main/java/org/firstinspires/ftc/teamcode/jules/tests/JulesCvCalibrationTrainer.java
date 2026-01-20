@@ -17,6 +17,8 @@ import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesStreamBus;
 import org.firstinspires.ftc.teamcode.jules.bridge.util.GsonCompat;
 import org.firstinspires.ftc.teamcode.jules.cv.AprilTagCamera;
+import org.firstinspires.ftc.teamcode.jules.shot.ShooterController;
+import org.firstinspires.ftc.teamcode.jules.shot.ShooterController.ShotMetrics;
 import org.firstinspires.ftc.teamcode.jules.shot.ShotTrainerSettings;
 import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 
@@ -96,7 +98,7 @@ public class JulesCvCalibrationTrainer extends OpMode {
     private Pose currentTargetPose;
     private double currentOffsetRpm = 0.0;
     private double lastSuccessfulOffsetRpm = 0.0;
-    private ShooterController.ShotMetrics lastShotMetrics;
+    private ShotMetrics lastShotMetrics;
 
     @Override
     public void init() {
@@ -104,7 +106,11 @@ public class JulesCvCalibrationTrainer extends OpMode {
 
         // Hardware
         hardware = BjornHardware.forAutonomous(hardwareMap);
-        shooter = new ShooterController(hardware.wheel, hardware.wheel2, hardware.intake, hardware,
+        shooter = new ShooterController(
+                hardware.wheel,
+                hardware.wheel2,
+                hardware.intake,
+                hardware.boot,
                 hardware.getVoltageSensor());
 
         // Pedro
@@ -326,8 +332,9 @@ public class JulesCvCalibrationTrainer extends OpMode {
 
     private void requestRpmFromClient() {
         double dist = getCvDistance();
-        if (dist < 0) dist = 1.0; // Fallback distance
-        
+        if (dist < 0)
+            dist = 1.0; // Fallback distance
+
         double distInches = dist * 39.37;
         double voltage = hardware.getVoltageSensor().getVoltage();
 
@@ -335,7 +342,7 @@ public class JulesCvCalibrationTrainer extends OpMode {
         req.addProperty("type", "request_rpm");
         req.addProperty("distance_in", distInches);
         req.addProperty("v_batt_load", voltage);
-        
+
         busPublish(req.toString());
     }
 
@@ -344,7 +351,7 @@ public class JulesCvCalibrationTrainer extends OpMode {
         double dist = getCvDistance();
         if (dist < 0)
             dist = 10; // Fallback
-        
+
         // Base RPM (Linear model from ShotTrainer)
         double distInches = dist * 39.37;
         double baseRpm = 2100.0 + (distInches * 8.0);
