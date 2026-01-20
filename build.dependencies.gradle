@@ -22,10 +22,11 @@ dependencies {
     // --- CORRECTED LINE ---
     implementation 'com.pedropathing:ftc:2.0.2' // Was 2.2.0, now corrected to 2.0.2
     implementation 'com.pedropathing:telemetry:1.0.0'
-    implementation "com.bylazar:fullpanels:1.0.12"
+    implementation 'com.bylazar:fullpanels:1.0.12'
     implementation 'com.bylazar:docs:1.0.4'
     implementation 'com.bylazar:telemetry:1.0.3'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'com.bylazar:configurables:1.0.5'
     
     // Exclude the duplicate Gson library from all third-party dependencies to resolve build conflicts.
     implementation('com.bylazar:gamepad:1.0.4') {
