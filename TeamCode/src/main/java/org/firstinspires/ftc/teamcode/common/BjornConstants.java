@@ -38,9 +38,20 @@ public final class BjornConstants {
         public static final DcMotor.Direction INTAKE_DIRECTION = DcMotor.Direction.REVERSE;
         public static final DcMotor.ZeroPowerBehavior INTAKE_ZERO_POWER = DcMotor.ZeroPowerBehavior.BRAKE;
         public static final DcMotor.Direction WHEEL2_DIRECTION = DcMotor.Direction.FORWARD; // flip if needed
-        public static final DcMotor.Direction WHEEL_DIRECTION = DcMotor.Direction.REVERSE; // flip if needed
+        public static final DcMotor.Direction WHEEL_DIRECTION = DcMotor.Direction.FORWARD; // flip if needed
         public static final DcMotor.Direction TURRET_DIRECTION = DcMotor.Direction.FORWARD;
         public static final DcMotor.ZeroPowerBehavior TURRET_ZERO_POWER = DcMotor.ZeroPowerBehavior.BRAKE;
+        /**
+         * Encoder direction multiplier for turret angle calculation.
+         * FTC SDK motor direction only affects setPower(), NOT getCurrentPosition().
+         * Set to -1.0 to invert encoder reading so 0° = Left, positive = Right.
+         */
+        public static final double TURRET_ENCODER_DIRECTION = -1.0;
+        /**
+         * Power direction multiplier for turret PID output.
+         * Set to -1.0 to invert power output if the PID drives the turret the wrong way.
+         */
+        public static final double TURRET_POWER_DIRECTION = -1.0;
         public static final DcMotorSimple.Direction GRIP1_DIRECTION = DcMotorSimple.Direction.REVERSE;
         public static final DcMotorSimple.Direction GRIP2_DIRECTION = DcMotorSimple.Direction.FORWARD;
     }
@@ -111,9 +122,6 @@ public final class BjornConstants {
     public static final class Servos {
         private Servos() {
         }
-
-        public static final double BOOT_STOW = 0.0; // Retracted (0 degrees)
-        public static final double BOOT_KICK = 0.5; // Extended (90 degrees)
     }
 
     public static final class AutoPoses {

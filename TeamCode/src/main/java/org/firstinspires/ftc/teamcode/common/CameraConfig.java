@@ -38,6 +38,11 @@ public final class CameraConfig {
     public static final String CLASS_OBELISK = "obelisk";
     public static final String CLASS_UNKNOWN = "unknown";
 
+    // --- Control Mapping ---
+    // 1.0 = Add yaw to current. -1.0 = Subtract yaw from current.
+    // Use this to flip direction if turret moves AWAY from tag.
+    public static final double CAMERA_TO_TURRET_SCALAR = 1.0;
+
     private CameraConfig() {
     }
 

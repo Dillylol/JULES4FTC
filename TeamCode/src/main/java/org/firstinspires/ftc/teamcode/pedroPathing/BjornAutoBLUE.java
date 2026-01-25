@@ -36,7 +36,6 @@ public class BjornAutoBLUE extends OpMode {
     // ---------------- Hardware ----------------
     private Follower follower;
     private DcMotorEx Intake, Wheel, Wheel2;
-    private Servo Boot;
     private DistanceSensor tof;
 
     // ---------------- Tunables ----------------
@@ -56,14 +55,6 @@ public class BjornAutoBLUE extends OpMode {
     private static long INTAKE_PULSE_ON_MS = 3000L; // on duration
     private static long INTAKE_PULSE_OFF_MS = 1000L; // off duration between pulses
     private static long SHOOT_WINDOW_MS = 10000L; // total time for a shoot phase
-
-    // Boot positions (if used)
-    private static double BOOT_STOW = BjornConstants.Servos.BOOT_STOW;
-    private static double BOOT_KICK = BjornConstants.Servos.BOOT_KICK;
-    private static boolean USE_BOOT = true; // flip to false if no boot gate
-
-    // Delay after commanding boot open before intake may run
-    private static long BOOT_TO_INTAKE_DELAY_MS = 1000L; // 1.0s (tunable)
 
     // Settle delay at shoot pose BEFORE starting TOF scan
     private static long SETTLE_BEFORE_SCAN_MS = 500L; // 0.5s (tunable)
@@ -127,9 +118,6 @@ public class BjornAutoBLUE extends OpMode {
     private long pulseAnchor = -1; // base timestamp for pulses
     private boolean intakeOn = false;
 
-    // Gate: when boot was commanded open (for intake gating)
-    private long bootOpenedAt = -1; // -1 = not open / not yet timed
-
     // Settle-before-scan handling
     private boolean scanStarted = false;
     private long scanDelayUntil = -1; // time when scanning may begin
@@ -148,7 +136,6 @@ public class BjornAutoBLUE extends OpMode {
         Intake = hardware.intake;
         Wheel = hardware.wheel;
         Wheel2 = hardware.wheel2;
-        Boot = hardware.boot;
         tof = hardware.frontTof;
 
         // Build paths
@@ -172,9 +159,6 @@ public class BjornAutoBLUE extends OpMode {
 
     @Override
     public void start() {
-        // Move servos on start to comply with "no movement during init" requirement
-        if (USE_BOOT)
-            Boot.setPosition(BOOT_STOW);
     }
 
     @Override
@@ -272,8 +256,6 @@ public class BjornAutoBLUE extends OpMode {
         telemetry.addData("RPM target", (int) targetRpm);
         telemetry.addData("Final RPM offset", (int) FINAL_RPM_OFFSET);
         telemetry.addData("Wheel ready", ready);
-        long waitRemaining = (bootOpenedAt < 0) ? -1 : Math.max(0, BOOT_TO_INTAKE_DELAY_MS - (now - bootOpenedAt));
-        telemetry.addData("Boot→Intake wait (ms)", waitRemaining);
         long settleRemain = (scanDelayUntil < 0) ? -1 : Math.max(0, scanDelayUntil - now);
         telemetry.addData("Settle→Scan wait (ms)", settleRemain);
         telemetry.update();
@@ -284,14 +266,10 @@ public class BjornAutoBLUE extends OpMode {
         shootPhaseStart = System.currentTimeMillis();
         pulseAnchor = shootPhaseStart;
         intakeOn = false;
-        bootOpenedAt = -1; // reset gate timer each shoot phase
+        intakeOn = false;
 
         // Start wheel at idle immediately; we want it spinning during settle
         setWheelRPM(WHEEL_IDLE_RPM);
-
-        // Boot closed until the wheel is ready (runtime movement only)
-        if (USE_BOOT)
-            Boot.setPosition(BOOT_STOW);
 
         // Arm a delayed scan start; do NOT begin scanning yet
         scanStarted = false;
@@ -336,24 +314,8 @@ public class BjornAutoBLUE extends OpMode {
         if (ready && wheelRpm <= READY_OFF_RPM)
             ready = false;
 
-        // 3) Boot behavior + gate intake by delay AFTER boot opens
-        boolean bootGatePassed;
-        if (USE_BOOT) {
-            if (ready) {
-                Boot.setPosition(BOOT_KICK);
-                if (bootOpenedAt < 0)
-                    bootOpenedAt = now; // start delay the first time we open
-            } else {
-                Boot.setPosition(BOOT_STOW);
-                bootOpenedAt = -1; // reset if we close the boot
-            }
-            bootGatePassed = (bootOpenedAt >= 0) && (now - bootOpenedAt >= BOOT_TO_INTAKE_DELAY_MS);
-        } else {
-            bootGatePassed = true; // no boot → no gating
-        }
-
-        // 4) Intake pulsing ONLY when wheel is ready AND boot-open delay has passed
-        boolean allowIntake = ready && bootGatePassed;
+        // 4) Intake pulsing ONLY when wheel is ready
+        boolean allowIntake = ready;
         if (allowIntake) {
             long sinceAnchor = now - pulseAnchor;
             long period = INTAKE_PULSE_ON_MS + INTAKE_PULSE_OFF_MS;
@@ -373,8 +335,6 @@ public class BjornAutoBLUE extends OpMode {
         // 5) End of shoot window
         if (elapsed >= SHOOT_WINDOW_MS) {
             Intake.setPower(0.0);
-            if (USE_BOOT)
-                Boot.setPosition(BOOT_STOW);
             setWheelRPM(0);
             return true;
         }
@@ -466,8 +426,6 @@ public class BjornAutoBLUE extends OpMode {
     private void shutdown() {
         Intake.setPower(0);
         setWheelRPM(0);
-        if (USE_BOOT)
-            Boot.setPosition(BOOT_STOW);
     }
 }
 // Certified Dylen Vasquez Design

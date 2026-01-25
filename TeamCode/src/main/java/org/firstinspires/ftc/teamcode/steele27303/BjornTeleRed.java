@@ -63,16 +63,16 @@ public class BjornTeleRed extends BjornTeleBase {
 
     // --- Turret Constants ---
     private static final double MOTOR_TICKS_PER_REV = 28.0;
-    private static final double TURRET_GEAR_REDUCTION = 5.0 * 4.0 * 4.0; // 80:1
+    private static final double TURRET_GEAR_REDUCTION = 75.52; // Actual ratio (5.23 * 3.61 * 4)
     private static final double TURRET_TICKS_PER_DEGREE = (MOTOR_TICKS_PER_REV * TURRET_GEAR_REDUCTION) / 360.0;
 
-    private static final double TURRET_KP = 0.03;
-    private static final double TURRET_KD = 0.0008;
-    private static final double ROBOT_ROTATION_FF_GAIN = 0.0025;
+    private static final double TURRET_KP = 0.015;
+    private static final double TURRET_KD = 0.004;
+    private static final double ROBOT_ROTATION_FF_GAIN = 0.0055;
     private static final double DEADBAND_DEG = 2.0;
-    private static final double MAX_POWER_DELTA = 0.04;
-    private static final double LIMIT_MIN = 20.0;
-    private static final double LIMIT_MAX = 160.0;
+    private static final double MAX_POWER_DELTA = 0.15;
+    private static final double LIMIT_MIN = 30.0;
+    private static final double LIMIT_MAX = 155.0;
     private static final double MANUAL_RATE_DEG_PER_SEC = 90.0;
     private static final double APRILTAG_CORRECTION_GAIN = 0.5;
 
@@ -93,6 +93,7 @@ public class BjornTeleRed extends BjornTeleBase {
     private boolean g1LbPrev = false;
     private boolean yawResetPrev = false;
     private boolean g2APrev = false;
+    private boolean dpadUpPrev = false; // Added for G1 Camera Toggle
     private double lastLoopTime = 0;
 
     // --- Alliance Config ---
@@ -200,7 +201,7 @@ public class BjornTeleRed extends BjornTeleBase {
         int currentPos = turret.getCurrentPosition();
         int deltaTicks = currentPos - lastEncoderPos;
         lastEncoderPos = currentPos;
-        turretAngleDeg += deltaTicks / TURRET_TICKS_PER_DEGREE;
+        turretAngleDeg += (deltaTicks / TURRET_TICKS_PER_DEGREE) * BjornConstants.Motors.TURRET_ENCODER_DIRECTION;
 
         // Get robot rotation
         double robotYaw = imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES);
@@ -208,15 +209,17 @@ public class BjornTeleRed extends BjornTeleBase {
         lastRobotYaw = robotYaw;
 
         // --- G2: A toggles AprilTag tracking ---
-        if (gamepad2.a && !g2APrev) {
+        // Added: G1 D-Pad Up also toggles tracking
+        if ((gamepad2.a && !g2APrev) || (gamepad1.dpad_up && !dpadUpPrev)) {
             aprilTagTrackingEnabled = !aprilTagTrackingEnabled;
         }
         g2APrev = gamepad2.a;
+        dpadUpPrev = gamepad1.dpad_up;
 
         // --- Manual Control ---
         // G2: Left stick X (full authority at 0.75)
         // G1: D-Pad L/R (limited authority at 0.5)
-        double g2Input = -gamepad2.left_stick_x;
+        double g2Input = gamepad2.left_stick_x;
         double g1Input = 0.0;
         if (gamepad1.dpad_left)
             g1Input = -1.0;
@@ -231,14 +234,14 @@ public class BjornTeleRed extends BjornTeleBase {
             double headingDelta = stickInput * MANUAL_RATE_DEG_PER_SEC * dt;
             targetFieldHeading += headingDelta;
 
-            // Clamp to limits
-            double minFieldHeading = robotYaw + LIMIT_MIN;
-            double maxFieldHeading = robotYaw + LIMIT_MAX;
+            // Clamp to limits (Target = Local - Yaw)
+            double minFieldHeading = LIMIT_MIN - robotYaw;
+            double maxFieldHeading = LIMIT_MAX - robotYaw;
             targetFieldHeading = Range.clip(targetFieldHeading, minFieldHeading, maxFieldHeading);
             wasManualControl = true;
         } else if (wasManualControl) {
-            // Just released - lock to current position
-            targetFieldHeading = robotYaw + turretAngleDeg;
+            // Just released - lock to current position (Target = Local - Yaw)
+            targetFieldHeading = turretAngleDeg - robotYaw;
             wasManualControl = false;
         }
 
@@ -257,10 +260,14 @@ public class BjornTeleRed extends BjornTeleBase {
             }
 
             if (tagVisible && !isManualControl) {
-                targetFieldHeading += target.yaw * APRILTAG_CORRECTION_GAIN * dt * 30.0;
-                double minFieldHeading = robotYaw + LIMIT_MIN;
-                double maxFieldHeading = robotYaw + LIMIT_MAX;
-                targetFieldHeading = Range.clip(targetFieldHeading, minFieldHeading, maxFieldHeading);
+                // Filter Hallucinations: Check range (max 6.0 meters / ~20 ft)
+                double dist = Math.hypot(target.x, target.y); // Horizontal dist
+                if (dist < 6.0) { 
+                    targetFieldHeading += target.yaw * APRILTAG_CORRECTION_GAIN * dt * 30.0 * CameraConfig.CAMERA_TO_TURRET_SCALAR;
+                    double minFieldHeading = LIMIT_MIN - robotYaw;
+                    double maxFieldHeading = LIMIT_MAX - robotYaw;
+                    targetFieldHeading = Range.clip(targetFieldHeading, minFieldHeading, maxFieldHeading);
+                }
             }
         } else {
             // Still poll for telemetry even if not tracking
@@ -268,7 +275,12 @@ public class BjornTeleRed extends BjornTeleBase {
         }
 
         // --- Heading Hold PD Control ---
-        double desiredTurretAngle = targetFieldHeading - robotYaw;
+        // --- Heading Hold PD Control ---
+        double desiredTurretAngle = targetFieldHeading + robotYaw;
+        
+        // ABSOLUTE SAFETY CLAMP: Ensure target never exceeds physical limits
+        desiredTurretAngle = Range.clip(desiredTurretAngle, LIMIT_MIN, LIMIT_MAX);
+        
         double error = desiredTurretAngle - turretAngleDeg;
 
         if (Math.abs(error) < DEADBAND_DEG) {
@@ -277,27 +289,37 @@ public class BjornTeleRed extends BjornTeleBase {
 
         double derivative = (dt > 0) ? (error - lastTurretError) / dt : 0.0;
         double pid = (error * TURRET_KP) + (derivative * TURRET_KD);
-        double ff = -robotRate * ROBOT_ROTATION_FF_GAIN;
+        double ff = robotRate * ROBOT_ROTATION_FF_GAIN;
 
         double turretPower = pid + ff;
         lastTurretError = error;
 
         // Apply limits
-        if (turretAngleDeg < LIMIT_MIN && turretPower < 0)
-            turretPower = 0;
-        if (turretAngleDeg > LIMIT_MAX && turretPower > 0)
-            turretPower = 0;
+        // Apply limits (Standard PID suppression)
+        if (turretAngleDeg < LIMIT_MIN && turretPower < 0) turretPower = 0;
+        if (turretAngleDeg > LIMIT_MAX && turretPower > 0) turretPower = 0;
 
         // Clamp and slew rate limit
+        // Clamp and slew rate limit (Standard)
         if (Double.isNaN(turretPower))
             turretPower = 0;
         turretPower = Range.clip(turretPower, -G2_TURRET_POWER, G2_TURRET_POWER);
 
         double powerDelta = Range.clip(turretPower - lastTurretPower, -MAX_POWER_DELTA, MAX_POWER_DELTA);
-        turretPower = lastTurretPower + powerDelta;
+        double slewPower = lastTurretPower + powerDelta;
+        
+        // --- FORCE FIELD OVERRIDE (Bypasses Slew Rate) ---
+        // If we are out of bounds, we ignore slew rate and apply IMMEDIATE corrective force.
+        if (turretAngleDeg < LIMIT_MIN) {
+             slewPower = 0.6; // Immediate Hard Push Right
+        } else if (turretAngleDeg > LIMIT_MAX) {
+             slewPower = -0.6; // Immediate Hard Push Left
+        }
+        
+        turretPower = slewPower;
         lastTurretPower = turretPower;
 
-        turret.setPower(turretPower);
+        turret.setPower(turretPower * BjornConstants.Motors.TURRET_POWER_DIRECTION);
     }
 
     // --- Inline Input Handlers ---
@@ -318,8 +340,8 @@ public class BjornTeleRed extends BjornTeleBase {
                     follower.getPose().getX(),
                     follower.getPose().getY(),
                     0));
-            // Reset turret target to match
-            targetFieldHeading = turretAngleDeg;
+            // Reset turret target to match (Target = Local - Yaw)
+            targetFieldHeading = turretAngleDeg - 0.0; 
         }
         yawResetPrev = yawReset;
     }
