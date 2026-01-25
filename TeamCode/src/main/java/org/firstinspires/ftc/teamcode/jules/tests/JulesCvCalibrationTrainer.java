@@ -110,7 +110,6 @@ public class JulesCvCalibrationTrainer extends OpMode {
                 hardware.wheel,
                 hardware.wheel2,
                 hardware.intake,
-                hardware.boot,
                 hardware.getVoltageSensor());
 
         // Pedro

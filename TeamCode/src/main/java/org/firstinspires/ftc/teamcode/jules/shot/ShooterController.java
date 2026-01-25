@@ -31,7 +31,7 @@ public final class ShooterController {
     private static final double DIP_THRESHOLD_RPM = 50.0;
     private static final long DIP_WINDOW_MS = 220L;
     private static final long LOCKOUT_MS = 700L;
-    private static final long LIFT_HOLD_MS = 350L;
+
     private static final long INTAKE_PULSE_NS = 200_000_000L;
     private static final double RPM_MIN = 1200.0;
     private static final double RPM_MAX = 3000.0;
@@ -40,7 +40,6 @@ public final class ShooterController {
     private final DcMotorEx flywheel;
     private final DcMotorEx flywheelSecondary;
     private final DcMotorEx intake;
-    private final Servo lift;
     @Nullable
     private final VoltageSensor vSensor;
 
@@ -61,25 +60,24 @@ public final class ShooterController {
     private boolean shotDetected;
     private ShotMetrics pendingShot;
 
-    private long liftCloseAtMs;
+
+
     private long intakePulseEndNs;
 
     public ShooterController(@Nullable DcMotorEx flywheel,
             @Nullable DcMotorEx flywheelSecondary,
-            @Nullable DcMotorEx intake,
-            @Nullable Servo lift) {
-        this(flywheel, flywheelSecondary, intake, lift, null);
+            @Nullable DcMotorEx intake) {
+        this(flywheel, flywheelSecondary, intake, null);
     }
 
     public ShooterController(@Nullable DcMotorEx flywheel,
             @Nullable DcMotorEx flywheelSecondary,
             @Nullable DcMotorEx intake,
-            @Nullable Servo lift,
             @Nullable VoltageSensor vSensor) {
         this.flywheel = flywheel;
         this.flywheelSecondary = flywheelSecondary;
         this.intake = intake;
-        this.lift = lift;
+
         this.vSensor = vSensor;
         this.targetRpm = 0;
         this.filteredRpm = 0.0;
@@ -147,14 +145,12 @@ public final class ShooterController {
         monitorShotWindow(nowMs);
         updateFlywheelCommand();
         serviceIntake();
-        serviceLift(nowMs);
     }
 
     public boolean fire(long nowMs) {
         if (!isReady(nowMs) || isLockedOut(nowMs)) {
             return false;
         }
-        openLift();
         pulseIntake();
         fireCommandMs = nowMs;
         rpmSnapshotAtFire = filteredRpm;
@@ -165,7 +161,6 @@ public final class ShooterController {
         readyStartMs = 0L;
         readyAtMs = 0L;
         readyLatencyMs = 0L;
-        liftCloseAtMs = nowMs + LIFT_HOLD_MS;
         return true;
     }
 
@@ -320,32 +315,7 @@ public final class ShooterController {
         }
     }
 
-    private void openLift() {
-        if (lift == null) {
-            return;
-        }
-        try {
-            lift.setPosition(BjornConstants.Servos.BOOT_KICK);
-        } catch (Exception ignored) {
-        }
-    }
 
-    private void closeLift() {
-        if (lift == null) {
-            return;
-        }
-        try {
-            lift.setPosition(BjornConstants.Servos.BOOT_STOW);
-        } catch (Exception ignored) {
-        }
-    }
-
-    private void serviceLift(long nowMs) {
-        if (liftCloseAtMs > 0L && nowMs >= liftCloseAtMs) {
-            closeLift();
-            liftCloseAtMs = 0L;
-        }
-    }
 
     private static void setVelocitySafe(@Nullable DcMotorEx motor, double ticksPerSecond) {
         if (motor == null) {

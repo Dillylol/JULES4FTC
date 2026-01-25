@@ -17,8 +17,10 @@ import org.firstinspires.ftc.teamcode.common.shooter.ShooterController;
  * - Intake Control (A = In, X = Out)
  * - ShooterController (Flywheel RPM, Readiness)
  * - LED Status (Green = Ready, Red = Not Ready)
- * - Boot Servo (RT = Kick)
+ * - ShooterController (Flywheel RPM, Readiness)
+ * - LED Status (Green = Ready, Red = Not Ready)
  * - Auto Grip Spin when Ready
+ * - Manual Grip Spin (RT)
  * 
  * Drive, IMU, Pedro, Camera are in subclasses for reduced latency.
  */
@@ -32,7 +34,6 @@ public abstract class BjornTeleBase extends OpMode {
     // --- Subsystem Hardware ---
     protected DcMotorEx intake, wheel, wheel2;
     protected CRServo grip1, grip2;
-    protected Servo boot;
     protected DigitalChannel led1Green, led1Red, led2Green, led2Red;
 
     // --- Systems ---
@@ -47,17 +48,6 @@ public abstract class BjornTeleBase extends OpMode {
     private boolean b2Prev = false;
     private boolean y2Prev = false;
     private boolean rtPrev = false;
-
-    // --- Boot State Machine ---
-    private enum BootState {
-        IDLE, EXTENDING, HOLDING, RETRACTING
-    }
-
-    private BootState bootState = BootState.IDLE;
-    private long bootStateStartMs = 0;
-    private static final long BOOT_EXTEND_MS = 150;
-    private static final long BOOT_HOLD_MS = 50;
-    private static final long BOOT_RETRACT_MS = 150;
 
     // --- Constants ---
     protected static final double SHOOTER_RPM = 2800.0;
@@ -81,10 +71,6 @@ public abstract class BjornTeleBase extends OpMode {
         grip2 = hardwareMap.get(CRServo.class, BjornConstants.Motors.GRIP2);
         grip1.setDirection(BjornConstants.Motors.GRIP1_DIRECTION);
         grip2.setDirection(BjornConstants.Motors.GRIP2_DIRECTION);
-
-        // 3. Boot Servo
-        boot = hardwareMap.get(Servo.class, "boot");
-        boot.setPosition(BjornConstants.Servos.BOOT_STOW);
 
         // 4. LEDs
         led1Green = hardwareMap.get(DigitalChannel.class, "led1_green");
@@ -115,7 +101,6 @@ public abstract class BjornTeleBase extends OpMode {
         shooterController.update(nowMs);
         handleShooterToggle(nowMs);
         handleIntake();
-        handleBoot(nowMs);
         handleGrips(nowMs);
 
         boolean isReady = shooterController.isReady(nowMs);
@@ -126,13 +111,17 @@ public abstract class BjornTeleBase extends OpMode {
 
     private void handleShooterToggle(long nowMs) {
         boolean b = gamepad1.b;
-        if (b && !bPrev)
+        if (b && !bPrev) {
             shooterActive = !shooterActive;
+            if (!shooterActive) shooterIdle = false; // Force Stop
+        }
         bPrev = b;
 
         boolean b2 = gamepad2.b;
-        if (b2 && !b2Prev)
+        if (b2 && !b2Prev) {
             shooterActive = !shooterActive;
+            if (!shooterActive) shooterIdle = false; // Force Stop
+        }
         b2Prev = b2;
 
         boolean y2 = gamepad2.y;
@@ -158,57 +147,28 @@ public abstract class BjornTeleBase extends OpMode {
         intake.setPower(intakePower);
     }
 
-    private void handleBoot(long nowMs) {
-        boolean rtPressed = (gamepad1.right_trigger > 0.5) || (gamepad2.right_trigger > 0.5);
-        boolean rtRising = rtPressed && !rtPrev;
-        rtPrev = rtPressed;
-
-        switch (bootState) {
-            case IDLE:
-                if (rtRising) {
-                    boot.setPosition(BjornConstants.Servos.BOOT_KICK);
-                    bootState = BootState.EXTENDING;
-                    bootStateStartMs = nowMs;
-                }
-                break;
-            case EXTENDING:
-                if (nowMs - bootStateStartMs >= BOOT_EXTEND_MS) {
-                    bootState = BootState.HOLDING;
-                    bootStateStartMs = nowMs;
-                }
-                break;
-            case HOLDING:
-                if (nowMs - bootStateStartMs >= BOOT_HOLD_MS) {
-                    boot.setPosition(BjornConstants.Servos.BOOT_STOW);
-                    bootState = BootState.RETRACTING;
-                    bootStateStartMs = nowMs;
-                }
-                break;
-            case RETRACTING:
-                if (nowMs - bootStateStartMs >= BOOT_RETRACT_MS) {
-                    bootState = BootState.IDLE;
-                }
-                break;
-        }
-    }
-
     private void handleGrips(long nowMs) {
         boolean isReady = shooterController.isReady(nowMs);
+        boolean rtPressed = (gamepad1.right_trigger > 0.5) || (gamepad2.right_trigger > 0.5);
+        boolean ltPressed = (gamepad1.left_trigger > 0.5) || (gamepad2.left_trigger > 0.5);
 
-        // Auto Grip Spin when Ready + Shooter Active
-        if (isReady && shooterActive) {
-            grip1.setPower(1.0);
-            grip2.setPower(1.0);
-        } else if (!gamepad1.a && !gamepad1.x) {
-            grip1.setPower(0.0);
-            grip2.setPower(0.0);
-        }
-
-        // Manual Override: X = Outtake reverses grips
-        if (gamepad1.x) {
+        // Priority 1: Outtake (Manual LT or X) - Overrides Intake
+        if (ltPressed || gamepad1.x) {
             grip1.setPower(-1.0);
             grip2.setPower(-1.0);
+            return;
         }
+
+        // Priority 2: Intake (Manual RT Only - "Shooting")
+        if (rtPressed) {
+            grip1.setPower(1.0);
+            grip2.setPower(1.0);
+            return;
+        }
+
+        // Priority 3: Idle
+        grip1.setPower(0.0);
+        grip2.setPower(0.0);
     }
 
     // --- LED Status ---

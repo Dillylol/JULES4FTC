@@ -31,7 +31,6 @@ public final class ShooterController {
     private static final double DIP_THRESHOLD_RPM = 50.0;
     private static final long DIP_WINDOW_MS = 220L;
     private static final long LOCKOUT_MS = 700L;
-    private static final long BOOT_HOLD_MS = 350L;
     private static final long INTAKE_PULSE_NS = 200_000_000L;
     private static final double RPM_MIN = 1200.0;
     private static final double RPM_MAX = 3000.0;
@@ -63,7 +62,6 @@ public final class ShooterController {
     private boolean shotDetected;
     private ShotMetrics pendingShot;
 
-    private long bootStowAtMs;
     private long intakePulseEndNs;
     private int rampStartRpm = 0;
     private boolean rampActive = false;
@@ -147,9 +145,6 @@ public final class ShooterController {
         return filteredRpm;
     }
 
-    private static final long BOOT_PULSE_MS = 350L; // Default pulse for auto
-    public long autoPulseEndMs = 0L; // Made public/accessible or just keep private logic
-
     // Simplified Logic: Press -> Power 1.0. Release -> Power 0.0 (Let mechanism
     // return).
 
@@ -164,7 +159,6 @@ public final class ShooterController {
         monitorShotWindow(nowMs);
         updateFlywheelCommand(nowMs);
         serviceIntake();
-        serviceBoot(nowMs);
     }
 
     private boolean pulsingIntake = false;
@@ -173,45 +167,12 @@ public final class ShooterController {
         return fire(nowMs, true);
     }
 
-    // Auto Fire: Pulse for BOOT_PULSE_MS then cut power
-    /*
-     * // Boot Removed
-     * public void fireBoot(long nowMs) {
-     * if (hardware != null && hardware.boot != null) {
-     * hardware.boot.setPower(1.0);
-     * autoPulseEndMs = nowMs + BOOT_PULSE_MS;
-     * }
-     * }
-     */
-
-    // Manual: Direct Control
-    // extending = true -> Power 1.0
-    // extending = false -> Power 0.0
-    // Manual: Bidirectional Control
-    // Retract (Reverse/Unjam) takes priority over Extend.
-    public void controlBoot(boolean extend, boolean retract, long nowMs) {
-        // Placeholder: logic removed.
-        // In future, this will control the Lift servo.
-    }
-
-    public void fireBootAuto(long nowMs) {
-        // fireBoot(nowMs);
-    }
-
-    private void serviceBoot(long nowMs) {
-        if (bootStowAtMs > 0L && nowMs >= bootStowAtMs) {
-            stowBoot();
-            bootStowAtMs = 0L;
-        }
-    }
 
     public boolean fire(long nowMs, boolean engageIntake) {
         if (!isReady(nowMs) || isLockedOut(nowMs)) {
             return false;
         }
         pulseFeed(engageIntake);
-        kickBoot();
-        bootStowAtMs = nowMs + BOOT_HOLD_MS;
         fireCommandMs = nowMs;
         rpmSnapshotAtFire = filteredRpm;
         shotDetected = false;
@@ -471,24 +432,6 @@ public final class ShooterController {
         try {
             motor.setPower(power);
         } catch (Exception ignored) {
-        }
-    }
-
-    private void kickBoot() {
-        if (hardware != null && hardware.boot != null) {
-            try {
-                hardware.boot.setPosition(BjornConstants.Servos.BOOT_KICK);
-            } catch (Exception ignored) {
-            }
-        }
-    }
-
-    private void stowBoot() {
-        if (hardware != null && hardware.boot != null) {
-            try {
-                hardware.boot.setPosition(BjornConstants.Servos.BOOT_STOW);
-            } catch (Exception ignored) {
-            }
         }
     }
 }

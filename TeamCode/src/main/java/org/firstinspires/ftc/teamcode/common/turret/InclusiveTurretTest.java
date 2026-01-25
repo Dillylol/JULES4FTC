@@ -10,6 +10,7 @@ import com.qualcomm.robotcore.util.Range;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
+import org.firstinspires.ftc.teamcode.common.BjornConstants;
 import org.firstinspires.ftc.teamcode.common.CameraConfig;
 import org.firstinspires.ftc.teamcode.jules.cv.AprilTagCamera;
 import org.firstinspires.ftc.teamcode.jules.cv.AprilTagCamera.TagObservation;
@@ -46,25 +47,27 @@ public class InclusiveTurretTest extends LinearOpMode {
     private IMU imu;
     private AprilTagCamera camera;
 
-    // Gear ratio constants (from InertialTurretTest)
+    // Gear ratio constants (matched to BjornTele)
     private static final double MOTOR_TICKS_PER_REV = 28.0;
-    private static final double TURRET_GEAR_REDUCTION = 5.0 * 4.0 * 4.0; // 80:1
+    private static final double TURRET_GEAR_REDUCTION = 75.52; // Actual ratio (5.23 * 3.61 * 4)
     private static final double TURRET_TICKS_PER_DEGREE = (MOTOR_TICKS_PER_REV * TURRET_GEAR_REDUCTION) / 360.0;
 
-    // --- Tuning Constants (from InertialTurretTest/HybridFusionTrackingTest) ---
-    public static double TURRET_KP = 0.03;
-    public static double TURRET_KD = 0.0008;
-    public static double ROBOT_ROTATION_FF_GAIN = 0.0025;
+    // --- Tuned PID Constants (from Auto-Tuner v5) ---
+    // --- Improved PID Constants (Balanced) ---
+    public static double TURRET_KP = 0.015;
+    public static double TURRET_KD = 0.004;
+    public static double TURRET_FF = 0.00587;
+    public static double ROBOT_ROTATION_FF_GAIN = 0.0055;
 
     // Deadband: Ignore small errors to reduce jitter
     public static double DEADBAND_DEG = 2.0;
 
     // Slew Rate: Max power change per loop to smooth output
-    public static double MAX_POWER_DELTA = 0.04;
+    public static double MAX_POWER_DELTA = 0.15;
 
     // Limits
-    public static double LIMIT_MIN = 20.0;
-    public static double LIMIT_MAX = 160.0;
+    public static double LIMIT_MIN = 30.0;
+    public static double LIMIT_MAX = 155.0;
 
     // Manual control sensitivity
     private static final double MANUAL_RATE_DEG_PER_SEC = 90.0; // Degrees per second at full stick
@@ -84,9 +87,9 @@ public class InclusiveTurretTest extends LinearOpMode {
 
     @Override
     public void runOpMode() {
-        // Initialize turret motor
+        // Initialize turret motor (using BjornConstants for consistency)
         turret = hardwareMap.get(DcMotorEx.class, "Turret");
-        turret.setDirection(DcMotor.Direction.FORWARD);
+        turret.setDirection(BjornConstants.Motors.TURRET_DIRECTION);
         turret.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         turret.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         turret.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
@@ -125,7 +128,7 @@ public class InclusiveTurretTest extends LinearOpMode {
             int currentPos = turret.getCurrentPosition();
             int deltaTicks = currentPos - lastEncoderPos;
             lastEncoderPos = currentPos;
-            turretAngleDeg += deltaTicks / TURRET_TICKS_PER_DEGREE;
+            turretAngleDeg += (deltaTicks / TURRET_TICKS_PER_DEGREE) * BjornConstants.Motors.TURRET_ENCODER_DIRECTION;
 
             // Get robot rotation
             YawPitchRollAngles angles = imu.getRobotYawPitchRollAngles();
@@ -156,12 +159,12 @@ public class InclusiveTurretTest extends LinearOpMode {
             }
 
             // --- Manual Control (Left Stick X) ---
-            double stickInput = -gamepad1.left_stick_x; // Negative for intuitive direction
-            boolean isManualControl = Math.abs(stickInput) > 0.1;
+            double stickX = gamepad1.left_stick_x; // Positive: Right stick -> Right turret
+            boolean isManualControl = Math.abs(stickX) > 0.1;
 
             if (isManualControl) {
                 // Adjust target heading based on stick input
-                double headingDelta = stickInput * MANUAL_RATE_DEG_PER_SEC * dt;
+                double headingDelta = stickX * MANUAL_RATE_DEG_PER_SEC * dt;
                 targetFieldHeading += headingDelta;
 
                 // Clamp target to limits (field heading corresponds to turret angle at current
@@ -205,7 +208,7 @@ public class InclusiveTurretTest extends LinearOpMode {
             }
 
             // --- Heading Hold Control ---
-            double desiredTurretAngle = targetFieldHeading - robotYaw;
+            double desiredTurretAngle = targetFieldHeading + robotYaw;
             double error = desiredTurretAngle - turretAngleDeg;
 
             // Apply deadband
@@ -216,7 +219,7 @@ public class InclusiveTurretTest extends LinearOpMode {
             // PD Controller
             double derivative = (dt > 0) ? (error - lastError) / dt : 0.0;
             double pid = (error * TURRET_KP) + (derivative * TURRET_KD);
-            double ff = -robotRate * ROBOT_ROTATION_FF_GAIN;
+            double ff = robotRate * ROBOT_ROTATION_FF_GAIN;
 
             double turretPower = pid + ff;
             lastError = error;
@@ -230,13 +233,13 @@ public class InclusiveTurretTest extends LinearOpMode {
             // --- Clamp and Slew Rate Limit ---
             if (Double.isNaN(turretPower))
                 turretPower = 0;
-            turretPower = Range.clip(turretPower, -0.75, 0.75);
+            turretPower = Range.clip(turretPower, -1.0, 1.0);
 
             double powerDelta = Range.clip(turretPower - lastPower, -MAX_POWER_DELTA, MAX_POWER_DELTA);
             turretPower = lastPower + powerDelta;
             lastPower = turretPower;
 
-            turret.setPower(turretPower);
+            turret.setPower(turretPower * BjornConstants.Motors.TURRET_POWER_DIRECTION);
 
             // --- Telemetry ---
             telemetry.addData("Mode", isManualControl ? "MANUAL" : "HOLDING");
