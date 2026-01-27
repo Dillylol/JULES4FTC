@@ -50,7 +50,7 @@ public class BjornTeleRed extends BjornTeleBase {
 
     // --- Turret Hardware (Inline) ---
     private DcMotorEx turret;
-    private DistanceSensor frontTof;
+    // frontTof moved to Base/Hardware
 
     // --- Pedro (Inline) ---
     private Follower follower;
@@ -146,10 +146,13 @@ public class BjornTeleRed extends BjornTeleBase {
         aprilTagCamera.start(hardwareMap, null);
 
         // --- ToF Sensor (Inline Init) ---
-        frontTof = hardwareMap.get(DistanceSensor.class, BjornConstants.Sensors.TOF_FRONT);
+        // frontTof initialized in Base via BjornHardware
 
         // --- Subsystems (From Base) ---
         initSubsystems();
+
+        // Pass Camera to Shooter for CV calculation
+        shooter.setCamera(aprilTagCamera, GOAL_TAG_ID);
 
         telemetry.addLine("Bjorn TeleOp RED Initialized");
         telemetry.addData("Goal Tag", GOAL_TAG_ID);
@@ -177,10 +180,7 @@ public class BjornTeleRed extends BjornTeleBase {
         updateDrive();
 
         // --- Subsystems (From Base) - G2 controls shooter/boot ---
-        // Override shooter RPM if active
-        if (shooterActive) {
-            shooterController.setTargetRpm(getDynamicRpm(), nowMs);
-        }
+        // Shooter RPM managed by TeleOpShooter in updateSubsystems
         updateSubsystems(nowMs);
 
         // --- Telemetry ---
@@ -262,8 +262,9 @@ public class BjornTeleRed extends BjornTeleBase {
             if (tagVisible && !isManualControl) {
                 // Filter Hallucinations: Check range (max 6.0 meters / ~20 ft)
                 double dist = Math.hypot(target.x, target.y); // Horizontal dist
-                if (dist < 6.0) { 
-                    targetFieldHeading += target.yaw * APRILTAG_CORRECTION_GAIN * dt * 30.0 * CameraConfig.CAMERA_TO_TURRET_SCALAR;
+                if (dist < 6.0) {
+                    targetFieldHeading += target.yaw * APRILTAG_CORRECTION_GAIN * dt * 30.0
+                            * CameraConfig.CAMERA_TO_TURRET_SCALAR;
                     double minFieldHeading = LIMIT_MIN - robotYaw;
                     double maxFieldHeading = LIMIT_MAX - robotYaw;
                     targetFieldHeading = Range.clip(targetFieldHeading, minFieldHeading, maxFieldHeading);
@@ -277,10 +278,10 @@ public class BjornTeleRed extends BjornTeleBase {
         // --- Heading Hold PD Control ---
         // --- Heading Hold PD Control ---
         double desiredTurretAngle = targetFieldHeading + robotYaw;
-        
+
         // ABSOLUTE SAFETY CLAMP: Ensure target never exceeds physical limits
         desiredTurretAngle = Range.clip(desiredTurretAngle, LIMIT_MIN, LIMIT_MAX);
-        
+
         double error = desiredTurretAngle - turretAngleDeg;
 
         if (Math.abs(error) < DEADBAND_DEG) {
@@ -296,8 +297,10 @@ public class BjornTeleRed extends BjornTeleBase {
 
         // Apply limits
         // Apply limits (Standard PID suppression)
-        if (turretAngleDeg < LIMIT_MIN && turretPower < 0) turretPower = 0;
-        if (turretAngleDeg > LIMIT_MAX && turretPower > 0) turretPower = 0;
+        if (turretAngleDeg < LIMIT_MIN && turretPower < 0)
+            turretPower = 0;
+        if (turretAngleDeg > LIMIT_MAX && turretPower > 0)
+            turretPower = 0;
 
         // Clamp and slew rate limit
         // Clamp and slew rate limit (Standard)
@@ -307,15 +310,16 @@ public class BjornTeleRed extends BjornTeleBase {
 
         double powerDelta = Range.clip(turretPower - lastTurretPower, -MAX_POWER_DELTA, MAX_POWER_DELTA);
         double slewPower = lastTurretPower + powerDelta;
-        
+
         // --- FORCE FIELD OVERRIDE (Bypasses Slew Rate) ---
-        // If we are out of bounds, we ignore slew rate and apply IMMEDIATE corrective force.
+        // If we are out of bounds, we ignore slew rate and apply IMMEDIATE corrective
+        // force.
         if (turretAngleDeg < LIMIT_MIN) {
-             slewPower = 0.6; // Immediate Hard Push Right
+            slewPower = 0.6; // Immediate Hard Push Right
         } else if (turretAngleDeg > LIMIT_MAX) {
-             slewPower = -0.6; // Immediate Hard Push Left
+            slewPower = -0.6; // Immediate Hard Push Left
         }
-        
+
         turretPower = slewPower;
         lastTurretPower = turretPower;
 
@@ -341,7 +345,7 @@ public class BjornTeleRed extends BjornTeleBase {
                     follower.getPose().getY(),
                     0));
             // Reset turret target to match (Target = Local - Yaw)
-            targetFieldHeading = turretAngleDeg - 0.0; 
+            targetFieldHeading = turretAngleDeg - 0.0;
         }
         yawResetPrev = yawReset;
     }
@@ -380,55 +384,5 @@ public class BjornTeleRed extends BjornTeleBase {
         backRight.setPower((rotY + rotX - rx) / denom);
     }
 
-    private double getDynamicRpm() {
-        double rangeFt = -1.0;
-        boolean usingCv = false;
-
-        // 1. Try CV (Primary)
-        TagObservation goal = aprilTagCamera.getLatestGoalObservation(); // Assuming method exists or we poll
-        // Need to check latest observations since getLatestGoalObservation might return
-        // stale or null from thread
-        // Iterate detections again cleanly or use helper
-        List<TagObservation> detections = aprilTagCamera.pollDetections();
-        for (TagObservation obs : detections) {
-            if (obs.id == GOAL_TAG_ID) {
-                double x = obs.x / 0.0254; // meters to inches
-                double y = obs.y / 0.0254;
-                double z = obs.z / 0.0254;
-                double distIn = Math.sqrt(x * x + y * y + z * z);
-                rangeFt = distIn / 12.0;
-                usingCv = true;
-                break;
-            }
-        }
-
-        double rpm;
-        double slope, offset;
-
-        if (usingCv) {
-            slope = BjornConstants.Power.SHOOTER_RPM_SLOPE_CV;
-            offset = BjornConstants.Power.SHOOTER_RPM_OFFSET_CV;
-        } else {
-            // 2. Fallback to ToF
-            double distIn = frontTof.getDistance(DistanceUnit.INCH);
-            if (distIn > 100 || Double.isNaN(distIn)) { // Filter bad data
-                distIn = 0; // Default safe value? Or keep last valid?
-                // If invalid, let's just clamp to min meaningful range or set a reasonable
-                // default
-                rangeFt = 4.0; // Assume close range shot if sensor fails?
-            } else {
-                rangeFt = distIn / 12.0;
-            }
-            slope = BjornConstants.Power.SHOOTER_RPM_SLOPE_TOF;
-            offset = BjornConstants.Power.SHOOTER_RPM_OFFSET_TOF;
-        }
-
-        // 3. Calc & Clamp
-        rpm = (slope * rangeFt) + offset;
-        rpm = Range.clip(rpm, BjornConstants.Power.SHOOTER_MIN_RPM, BjornConstants.Power.SHOOTER_MAX_RPM);
-
-        telemetry.addData("DynRPM", "%.0f (Range: %.1fft, Source: %s)", rpm, rangeFt, usingCv ? "CV" : "ToF");
-
-        return rpm;
-    }
+    // getDynamicRpm removed - logic moved to TeleOpShooter
 }

@@ -8,14 +8,15 @@ import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 
 import org.firstinspires.ftc.teamcode.common.BjornConstants;
-import org.firstinspires.ftc.teamcode.common.shooter.ShooterController;
+import org.firstinspires.ftc.teamcode.common.BjornHardware;
+import org.firstinspires.ftc.teamcode.common.shooter.TeleOpShooter;
 
 /**
  * Base TeleOp - Subsystems Only (Reduced Latency Architecture)
  * 
  * Contains ONLY:
  * - Intake Control (A = In, X = Out)
- * - ShooterController (Flywheel RPM, Readiness)
+ * - TeleOpShooter (Flywheel RPM, Readiness, ToF)
  * - LED Status (Green = Ready, Red = Not Ready)
  * - ShooterController (Flywheel RPM, Readiness)
  * - LED Status (Green = Ready, Red = Not Ready)
@@ -37,7 +38,8 @@ public abstract class BjornTeleBase extends OpMode {
     protected DigitalChannel led1Green, led1Red, led2Green, led2Red;
 
     // --- Systems ---
-    protected ShooterController shooterController;
+    protected BjornHardware hardware;
+    protected TeleOpShooter shooter;
 
     // --- State ---
     protected boolean shooterActive = false;
@@ -57,85 +59,70 @@ public abstract class BjornTeleBase extends OpMode {
      * Subclasses MUST call this in their init() method.
      */
     protected void initSubsystems() {
-        // 1. Subsystem Motors
-        intake = hardwareMap.get(DcMotorEx.class, BjornConstants.Motors.INTAKE);
-        wheel = hardwareMap.get(DcMotorEx.class, BjornConstants.Motors.WHEEL);
-        wheel2 = hardwareMap.get(DcMotorEx.class, BjornConstants.Motors.WHEEL2);
+        // 1. Initialize Hardware Wrapper
+        hardware = BjornHardware.forTeleOp(hardwareMap);
 
-        intake.setDirection(BjornConstants.Motors.INTAKE_DIRECTION);
-        wheel.setDirection(BjornConstants.Motors.WHEEL_DIRECTION);
-        wheel2.setDirection(BjornConstants.Motors.WHEEL2_DIRECTION);
+        // 2. Alias fields for subclass compatibility
+        intake = hardware.intake;
+        wheel = hardware.wheel;
+        wheel2 = hardware.wheel2;
+        grip1 = hardware.grip1;
+        grip2 = hardware.grip2;
 
-        // 2. Grip Servos
-        grip1 = hardwareMap.get(CRServo.class, BjornConstants.Motors.GRIP1);
-        grip2 = hardwareMap.get(CRServo.class, BjornConstants.Motors.GRIP2);
-        grip1.setDirection(BjornConstants.Motors.GRIP1_DIRECTION);
-        grip2.setDirection(BjornConstants.Motors.GRIP2_DIRECTION);
+        led1Green = hardware.led1Green;
+        led1Red = hardware.led1Red;
+        led2Green = hardware.led2Green;
+        led2Red = hardware.led2Red;
 
-        // 4. LEDs
-        led1Green = hardwareMap.get(DigitalChannel.class, "led1_green");
-        led1Red = hardwareMap.get(DigitalChannel.class, "led1_red");
-        led2Green = hardwareMap.get(DigitalChannel.class, "led2_green");
-        led2Red = hardwareMap.get(DigitalChannel.class, "led2_red");
-
-        led1Green.setMode(DigitalChannel.Mode.OUTPUT);
-        led1Red.setMode(DigitalChannel.Mode.OUTPUT);
-        led2Green.setMode(DigitalChannel.Mode.OUTPUT);
-        led2Red.setMode(DigitalChannel.Mode.OUTPUT);
-
-        // 5. ShooterController
-        VoltageSensor vSensor = null;
-        for (VoltageSensor s : hardwareMap.getAll(VoltageSensor.class)) {
-            if (s.getVoltage() > 0) {
-                vSensor = s;
-                break;
-            }
-        }
-        shooterController = new ShooterController(wheel, wheel2, intake, null, vSensor);
+        // 3. Initialize Shooter
+        shooter = new TeleOpShooter(hardware);
     }
 
     /**
      * Subclasses MUST call this in their loop() method.
      */
     protected void updateSubsystems(long nowMs) {
-        shooterController.update(nowMs);
-        handleShooterToggle(nowMs);
+        shooter.update();
+        handleShooterToggle();
+        handleShooterCvInput();
         handleIntake();
-        handleGrips(nowMs);
+        handleGrips();
 
-        boolean isReady = shooterController.isReady(nowMs);
-        setLedStatus(isReady);
+        // LED status is handled inside TeleOpShooter now, but if we need manual
+        // override:
+        // shooter.update() calls updateLeds() internally.
     }
 
     // --- Input Handlers ---
 
-    private void handleShooterToggle(long nowMs) {
+    private void handleShooterToggle() {
         boolean b = gamepad1.b;
         if (b && !bPrev) {
-            shooterActive = !shooterActive;
-            if (!shooterActive) shooterIdle = false; // Force Stop
+            shooter.toggle();
         }
         bPrev = b;
 
         boolean b2 = gamepad2.b;
         if (b2 && !b2Prev) {
-            shooterActive = !shooterActive;
-            if (!shooterActive) shooterIdle = false; // Force Stop
+            shooter.toggle();
         }
         b2Prev = b2;
 
         boolean y2 = gamepad2.y;
-        if (y2 && !y2Prev)
-            shooterIdle = !shooterIdle;
-        y2Prev = y2;
-
-        if (shooterActive) {
-            shooterController.setTargetRpm(SHOOTER_RPM, nowMs);
-        } else if (shooterIdle) {
-            shooterController.setTargetRpm(SHOOTER_IDLE_RPM, nowMs);
-        } else {
-            shooterController.stop(nowMs);
+        if (y2 && !y2Prev) {
+            shooter.toggleIdle();
         }
+        y2Prev = y2;
+    }
+
+    private boolean g2DpadLeftPrev = false;
+
+    private void handleShooterCvInput() {
+        boolean dpadLeft = gamepad2.dpad_left;
+        if (dpadLeft && !g2DpadLeftPrev) {
+            shooter.toggleCv();
+        }
+        g2DpadLeftPrev = dpadLeft;
     }
 
     private void handleIntake() {
@@ -144,55 +131,50 @@ public abstract class BjornTeleBase extends OpMode {
             intakePower = 1.0;
         else if (gamepad1.x)
             intakePower = -1.0;
-        intake.setPower(intakePower);
+
+        if (intake != null)
+            intake.setPower(intakePower);
     }
 
-    private void handleGrips(long nowMs) {
-        boolean isReady = shooterController.isReady(nowMs);
+    private void handleGrips() {
         boolean rtPressed = (gamepad1.right_trigger > 0.5) || (gamepad2.right_trigger > 0.5);
         boolean ltPressed = (gamepad1.left_trigger > 0.5) || (gamepad2.left_trigger > 0.5);
 
-        // Priority 1: Outtake (Manual LT or X) - Overrides Intake
+        // Priority 1: Outtake (Manual LT or X)
         if (ltPressed || gamepad1.x) {
-            grip1.setPower(-1.0);
-            grip2.setPower(-1.0);
+            if (grip1 != null)
+                grip1.setPower(-1.0);
+            if (grip2 != null)
+                grip2.setPower(-1.0);
             return;
         }
 
         // Priority 2: Intake (Manual RT Only - "Shooting")
         if (rtPressed) {
-            grip1.setPower(1.0);
-            grip2.setPower(1.0);
+            if (grip1 != null)
+                grip1.setPower(1.0);
+            if (grip2 != null)
+                grip2.setPower(1.0);
             return;
         }
 
-        // Priority 3: Idle
-        grip1.setPower(0.0);
-        grip2.setPower(0.0);
+        // Priority 3: Idle (managed by Shooter? No, Shooter manages LEDs. Grips are
+        // manual in TeleOp)
+        if (grip1 != null)
+            grip1.setPower(0.0);
+        if (grip2 != null)
+            grip2.setPower(0.0);
     }
 
     // --- LED Status ---
-
-    protected void setLedStatus(boolean isReady) {
-        if (isReady) {
-            led1Green.setState(true);
-            led1Red.setState(false);
-            led2Green.setState(true);
-            led2Red.setState(false);
-        } else {
-            led1Green.setState(false);
-            led1Red.setState(true);
-            led2Green.setState(false);
-            led2Red.setState(true);
-        }
-    }
+    // Delegated to TeleOpShooter
 
     // --- Telemetry Helper ---
     protected void addSubsystemTelemetry(long nowMs) {
-        boolean isReady = shooterController.isReady(nowMs);
-        telemetry.addData("Shooter", shooterActive ? "ON" : (shooterIdle ? "IDLE" : "OFF"));
-        telemetry.addData("RPM", "%.0f / %.0f", shooterController.getMeasuredRpm(),
-                (double) shooterController.getTargetRpm());
-        telemetry.addData("Ready", isReady);
+        telemetry.addData("Shooter", shooter.isActive() ? "ACTIVE" : (shooter.isIdle() ? "IDLE" : "OFF"));
+        telemetry.addData("RPM", "%.0f / %d", shooter.getMeasuredRpm(), shooter.getTargetRpm());
+        telemetry.addData("Dist", "%.1f in", shooter.getDistanceInches());
+        telemetry.addData("Ready", shooter.isReady());
+        telemetry.addData("CV", shooter.isCvEnabled() ? "ON" : "OFF");
     }
 }
