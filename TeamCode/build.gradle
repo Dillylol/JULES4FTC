@@ -1,6 +1,7 @@
 //
 // build.gradle in TeamCode
 //
+task testClasses {} // Dummy task to satisfy external tools expecting standard Java task structure
 // Most of the definitions for building your module reside in a common, shared
 // file 'build.common.gradle'. Being factored in this way makes it easier to
 // integrate updates to the FTC into your code. If you really need to customize

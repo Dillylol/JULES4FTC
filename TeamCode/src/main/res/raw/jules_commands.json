@@ -1,0 +1,30 @@
+{
+  "schema": "jules-commands/v1",
+  "commands": [
+    {
+      "label": "Drive Forward",
+      "name": "drive",
+      "args": { "t": 0.5, "p": 0.5, "duration_ms": 400 }
+    },
+    {
+      "label": "Strafe Right",
+      "name": "strafe",
+      "args": { "speed": 0.4, "duration_ms": 400 }
+    },
+    {
+      "label": "Turn Left",
+      "name": "turn",
+      "args": { "speed": -0.4, "degrees": 30 }
+    },
+    {
+      "label": "Stop",
+      "name": "stop",
+      "args": {}
+    },
+    {
+      "label": "Ping",
+      "type": "ping",
+      "payload": { "source": "client" }
+    }
+  ]
+}
