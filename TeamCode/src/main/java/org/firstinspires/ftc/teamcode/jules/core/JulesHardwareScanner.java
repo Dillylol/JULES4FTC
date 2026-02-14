@@ -9,6 +9,7 @@ import com.qualcomm.robotcore.hardware.HardwareDevice;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
+import com.qualcomm.robotcore.hardware.IMU;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -26,18 +27,19 @@ public class JulesHardwareScanner {
     public final Map<String, CRServo> crServos = new HashMap<>();
     public final Map<String, DigitalChannel> digitalChannels = new HashMap<>();
     public final Map<String, VoltageSensor> voltageSensors = new HashMap<>();
-    
+    public final Map<String, IMU> imus = new HashMap<>();
+
     // Generic map for anything else if needed, or we can add specifics like sensors
     public final Map<String, HardwareDevice> allDevices = new HashMap<>();
 
     public void scan(HardwareMap map) {
         clear();
-        
+
         // Scan ALL devices first to generic map
         for (HardwareMap.DeviceMapping<? extends HardwareDevice> mapping : map.allDeviceMappings) {
-             for (Map.Entry<String, ? extends HardwareDevice> entry : mapping.entrySet()) {
-                 allDevices.put(entry.getKey(), entry.getValue());
-             }
+            for (Map.Entry<String, ? extends HardwareDevice> entry : mapping.entrySet()) {
+                allDevices.put(entry.getKey(), entry.getValue());
+            }
         }
 
         // Scan specific categories for typed access
@@ -57,9 +59,16 @@ public class JulesHardwareScanner {
         for (Map.Entry<String, DigitalChannel> entry : map.digitalChannel.entrySet()) {
             digitalChannels.put(entry.getKey(), entry.getValue());
         }
-         // Voltage Sensors
+        // Voltage Sensors
         for (Map.Entry<String, VoltageSensor> entry : map.voltageSensor.entrySet()) {
             voltageSensors.put(entry.getKey(), entry.getValue());
+        }
+        // IMUs
+        // IMUs
+        for (Map.Entry<String, HardwareDevice> entry : allDevices.entrySet()) {
+            if (entry.getValue() instanceof IMU) {
+                imus.put(entry.getKey(), (IMU) entry.getValue());
+            }
         }
     }
 
@@ -69,21 +78,23 @@ public class JulesHardwareScanner {
         crServos.clear();
         digitalChannels.clear();
         voltageSensors.clear();
+        imus.clear();
         allDevices.clear();
     }
 
     public JsonObject getManifest() {
         JsonObject manifest = new JsonObject();
-        
+
         manifest.add("motors", toJsonArray(motors.keySet()));
         manifest.add("servos", toJsonArray(servos.keySet()));
         manifest.add("cr_servos", toJsonArray(crServos.keySet()));
         manifest.add("digital_channels", toJsonArray(digitalChannels.keySet()));
         manifest.add("voltage_sensors", toJsonArray(voltageSensors.keySet()));
-        
+        manifest.add("imus", toJsonArray(imus.keySet()));
+
         // Add a summary of all devices for debugging/advanced usage
         JsonArray all = new JsonArray();
-        for(String key : allDevices.keySet()) {
+        for (String key : allDevices.keySet()) {
             all.add(key);
         }
         manifest.add("all_devices", all);
@@ -98,10 +109,18 @@ public class JulesHardwareScanner {
         }
         return array;
     }
-    
+
     // Command Execution Helpers
-    
-    public DcMotor getMotor(String id) { return motors.get(id); }
-    public Servo getServo(String id) { return servos.get(id); }
-    public CRServo getCRServo(String id) { return crServos.get(id); }
+
+    public DcMotor getMotor(String id) {
+        return motors.get(id);
+    }
+
+    public Servo getServo(String id) {
+        return servos.get(id);
+    }
+
+    public CRServo getCRServo(String id) {
+        return crServos.get(id);
+    }
 }

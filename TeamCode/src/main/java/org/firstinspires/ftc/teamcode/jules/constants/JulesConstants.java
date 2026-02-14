@@ -1,5 +1,6 @@
 package org.firstinspires.ftc.teamcode.jules.constants;
 
+import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 
 /**
@@ -15,6 +16,7 @@ public class JulesConstants {
     public static boolean USE_ODOMETRY = true; // Set to false if no odometry pods
     public static boolean USE_WEBCAM = true; // Set to false if no camera
     public static boolean USE_BATTERY_OPTIMIZATION = true; // Scale power based on voltage
+    public static boolean USE_PEDRO_PATHING = false; // Toggle for Pedro Pathing
 
     // ---------------- Hardware Map Names ----------------
     public static final class Motors {
@@ -31,6 +33,11 @@ public class JulesConstants {
     public static final class Sensors {
         public static final String IMU = "imu";
         public static final String WEBCAM = "Webcam 1";
+    }
+
+    public static final class IMU {
+        public static final RevHubOrientationOnRobot.LogoFacingDirection LOGO_DIR = RevHubOrientationOnRobot.LogoFacingDirection.UP;
+        public static final RevHubOrientationOnRobot.UsbFacingDirection USB_DIR = RevHubOrientationOnRobot.UsbFacingDirection.FORWARD;
     }
 
     // ---------------- Default Tuning Values ----------------
