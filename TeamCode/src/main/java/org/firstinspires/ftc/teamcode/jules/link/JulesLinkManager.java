@@ -23,10 +23,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Entry point tying together discovery, scheduling, and transport layers.
  */
-public class JulesLinkManager implements JulesWsClient.ConnectionListener {
+public class JulesLinkManager implements JulesWsClient.ConnectionListener, JulesWsClient.CommandListener {
 
     private static final String PREF_WS_URL = "JULES_WS_URL";
-    private static final String DEFAULT_WS_URL = "ws://192.168.49.1:8765/stream";
+    private static final String DEFAULT_WS_URL = "ws://192.168.49.1:8765/jules";
 
     private static final Object GLOBAL_LOCK = new Object();
     private static final long STOP_DELAY_MS = 7000L;
@@ -72,10 +72,10 @@ public class JulesLinkManager implements JulesWsClient.ConnectionListener {
     }
 
     public void init(OpMode opMode,
-                     HardwareMap hardwareMap,
-                     Telemetry telemetry,
-                     Gamepad gamepad1,
-                     Gamepad gamepad2) {
+            HardwareMap hardwareMap,
+            Telemetry telemetry,
+            Gamepad gamepad1,
+            Gamepad gamepad2) {
         this.opMode = opMode;
         organizer.bind(opMode, hardwareMap, gamepad1, gamepad2, telemetry);
         organizer.setOpModeState(JulesDataOrganizer.OpModeState.INIT);
@@ -138,7 +138,8 @@ public class JulesLinkManager implements JulesWsClient.ConnectionListener {
             if (attachedCount == 0) {
                 noOpModesRemaining = true;
                 if (sharedResources != null && pendingStopTask == null) {
-                    pendingStopTask = STOP_EXECUTOR.schedule(JulesLinkManager::performStop, STOP_DELAY_MS, TimeUnit.MILLISECONDS);
+                    pendingStopTask = STOP_EXECUTOR.schedule(JulesLinkManager::performStop, STOP_DELAY_MS,
+                            TimeUnit.MILLISECONDS);
                 }
             }
         }
@@ -188,10 +189,32 @@ public class JulesLinkManager implements JulesWsClient.ConnectionListener {
         // no-op
     }
 
+    @Override
+    public void onCommand(String type, com.google.gson.JsonObject payload) {
+        if ("exec_pyscript".equals(type)) {
+            com.qualcomm.robotcore.util.RobotLog.ii("JulesLinkManager",
+                    "Received start command. Simulating RUNNING state.");
+            organizer.setOpModeState(JulesDataOrganizer.OpModeState.RUNNING);
+        } else if ("stop_robot".equals(type)) {
+            com.qualcomm.robotcore.util.RobotLog.ii("JulesLinkManager",
+                    "Received stop command. Simulating STOPPED state.");
+            organizer.setOpModeState(JulesDataOrganizer.OpModeState.STOPPED);
+        } else if ("ping".equals(type)) {
+            if (payload.has("ts")) {
+                long ts = payload.get("ts").getAsLong();
+                com.google.gson.JsonObject pong = new com.google.gson.JsonObject();
+                pong.addProperty("type", "pong");
+                pong.addProperty("ts", ts);
+                sendNdjson(pong.toString());
+            }
+        }
+    }
+
     private void registerConnectionListener() {
         SharedResources current = shared;
         if (current != null && listenerRegistered.compareAndSet(false, true)) {
             current.wsClient.addConnectionListener(this);
+            current.wsClient.addCommandListener(this);
         }
     }
 
@@ -199,8 +222,16 @@ public class JulesLinkManager implements JulesWsClient.ConnectionListener {
         SharedResources current = shared;
         if (current != null && listenerRegistered.compareAndSet(true, false)) {
             current.wsClient.removeConnectionListener(this);
+            current.wsClient.removeCommandListener(this);
         }
         onConnectedCallbacks.clear();
+    }
+
+    public void addCommandListener(JulesWsClient.CommandListener listener) {
+        SharedResources current = shared;
+        if (current != null) {
+            current.wsClient.addCommandListener(listener);
+        }
     }
 
     private static SharedResources ensureSharedResources(String wsUrl, JulesDataOrganizer organizer) {
@@ -255,4 +286,3 @@ public class JulesLinkManager implements JulesWsClient.ConnectionListener {
         }
     }
 }
-

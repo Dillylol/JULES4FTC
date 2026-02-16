@@ -10,64 +10,74 @@ import org.firstinspires.ftc.teamcode.jules.core.JulesRobot;
 public class JulesMasterController extends OpMode {
 
     private JulesRobot robot;
-    private long lastTelemetryMs = 0;
-    private static final long TELEMETRY_PERIOD_MS = 50;
+    private String lastCommand = "none";
+    private long lastCommandTime = 0;
+    private String lastExecResult = "idle";
 
     @Override
     public void init() {
-        robot = new JulesRobot(hardwareMap, telemetry);
+        robot = new JulesRobot(this);
         robot.init();
 
+        // Show motor init status
         telemetry.addData("JULES", "Master Controller Initialized");
-        telemetry.addData("Bridge", robot.bridgeManager != null ? "Ready" : "Offline");
-
-        // Publish Manifest immediately upon init if bridge is ready
-        publishManifest();
+        telemetry.addData("Motors",
+                (robot.leftFront != null ? "LF✓ " : "LF✗ ") +
+                        (robot.leftRear != null ? "LR✓ " : "LR✗ ") +
+                        (robot.rightFront != null ? "RF✓ " : "RF✗ ") +
+                        (robot.rightRear != null ? "RR✓ " : "RR✗ "));
+        telemetry.update();
     }
 
     @Override
     public void start() {
-        // Publish Manifest again on start to be sure
-        publishManifest();
     }
 
     @Override
     public void loop() {
-        // 1. Update Robot Systems (Pedro Pathing, etc.)
         robot.update();
 
-        // 2. Process incoming commands from JULES App
+        // Peek at pending command for telemetry
+        String pending = org.firstinspires.ftc.teamcode.jules.bridge.JulesCommand.peekCommand();
+        if (pending != null) {
+            lastCommand = pending.length() > 80 ? pending.substring(0, 80) + "..." : pending;
+            lastCommandTime = System.currentTimeMillis();
+
+            // Show if it looks like JSON
+            boolean isJson = pending.trim().startsWith("{");
+            lastExecResult = isJson ? "JSON->executeCommand" : "text->legacy";
+        }
+
+        // Process commands
         robot.processCommands();
 
-        // 3. Publish Telemetry to JULES App
-        long now = System.currentTimeMillis();
-        if (now - lastTelemetryMs >= TELEMETRY_PERIOD_MS) {
-            JsonObject telem = robot.getTelemetryData();
-            telem.addProperty("type", "telemetry");
-            telem.addProperty("ts", now);
-            robot.publish(telem.toString());
-            lastTelemetryMs = now;
-        }
+        // Auto-stop motors when duration expires
+        robot.checkAutoStop();
 
-        // 4. Update Driver Station Telemetry
+        // Telemetry
         telemetry.addData("Status", "Running");
-        if (robot.bridgeManager != null) {
-            telemetry.addData("Bridge IP", robot.bridgeManager.getStatusSnapshot().ip);
-        }
+        telemetry.addData("Motors",
+                (robot.leftFront != null ? "LF✓ " : "LF✗ ") +
+                        (robot.leftRear != null ? "LR✓ " : "LR✗ ") +
+                        (robot.rightFront != null ? "RF✓ " : "RF✗ ") +
+                        (robot.rightRear != null ? "RR✓ " : "RR✗ "));
+        telemetry.addData("Last Cmd", lastCommand);
+        long ago = (lastCommandTime > 0) ? (System.currentTimeMillis() - lastCommandTime) / 1000 : -1;
+        telemetry.addData("Cmd Age", ago >= 0 ? ago + "s ago" : "never");
+        telemetry.addData("Exec Path", lastExecResult);
+        telemetry.update();
+
+        // Broadcast to App
+        com.google.gson.JsonObject telem = robot.getTelemetryData();
+        telem.addProperty("type", "telemetry");
+        telem.addProperty("ts", System.currentTimeMillis());
+        telem.addProperty("last_cmd", lastCommand);
+        telem.addProperty("last_exec", lastExecResult);
+        robot.publish(telem.toString());
     }
 
     @Override
     public void stop() {
         robot.stop();
-    }
-
-    private void publishManifest() {
-        if (robot.scanner != null) {
-            JsonObject manifest = robot.scanner.getManifest();
-            manifest.addProperty("type", "manifest");
-            manifest.addProperty("ts", System.currentTimeMillis());
-            robot.publish(manifest.toString());
-            telemetry.addData("JULES", "Manifest Published");
-        }
     }
 }

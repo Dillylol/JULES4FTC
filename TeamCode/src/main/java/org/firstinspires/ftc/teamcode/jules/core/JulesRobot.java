@@ -11,9 +11,12 @@ import com.pedropathing.follower.Follower;
 import com.pedropathing.geometry.Pose;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
+import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesBridgeManager;
 import org.firstinspires.ftc.teamcode.jules.bridge.JulesStreamBus;
+import org.firstinspires.ftc.teamcode.jules.link.JulesLinkManager;
+import org.firstinspires.ftc.teamcode.jules.link.JulesWsClient;
 import org.firstinspires.ftc.teamcode.jules.constants.JulesConstants;
 
 /**
@@ -32,36 +35,54 @@ public class JulesRobot {
     public IMU imu;
     public Follower follower; // Pedro Pathing
 
-    // JULES Bridge
-    public JulesBridgeManager bridgeManager;
-    public JulesStreamBus streamBus;
+    // JULES Link
+    public JulesLinkManager linkManager;
 
     // Dynamic Hardware Scanner
     public final JulesHardwareScanner scanner = new JulesHardwareScanner();
 
+    // Bridge Manager Fields
+    private JulesBridgeManager bridgeManager;
+    private JulesStreamBus streamBus;
     private JulesStreamBus.Subscription subscription;
 
+    // Auto-stop timer: when > 0, stop motors after this epoch ms
+    public long driveStopTime = 0;
+
+    private com.qualcomm.robotcore.eventloop.opmode.OpMode opMode;
+
+    public JulesRobot(com.qualcomm.robotcore.eventloop.opmode.OpMode opMode) {
+        this.opMode = opMode;
+        this.hardwareMap = opMode.hardwareMap;
+        this.telemetry = opMode.telemetry;
+    }
+
+    /**
+     * Legacy constructor. Cannot use JulesLinkManager fully without OpMode.
+     */
     public JulesRobot(HardwareMap hardwareMap, Telemetry telemetry) {
         this.hardwareMap = hardwareMap;
         this.telemetry = telemetry;
+        this.opMode = null; // LinkManager will fail to init fully
     }
 
     public void init() {
-        initHardware();
         initBridge();
+        initHardware(); // Initialize motors, sensors, IMU
+        // initLinkManager(); // Disabled: Robot is now Server-only via
+        // JulesBridgeManager
         // Dynamic scan
         scanner.scan(hardwareMap);
 
         // Advertise manifest if bridge is ready
         if (bridgeManager != null) {
-            bridgeManager.setHardwareScanner(scanner);
+            publishManifest();
         }
     }
 
     public void stop() {
-        if (subscription != null) {
-            subscription.close();
-            subscription = null;
+        if (linkManager != null) {
+            linkManager.stop();
         }
     }
 
@@ -73,13 +94,13 @@ public class JulesRobot {
             rightRear = hardwareMap.tryGet(DcMotor.class, JulesConstants.Motors.BACK_RIGHT);
 
             if (leftFront != null)
-                leftFront.setDirection(JulesConstants.Motors.LEFT_DIR);
+                leftFront.setDirection(JulesConstants.Motors.FRONT_LEFT_DIR);
             if (leftRear != null)
-                leftRear.setDirection(JulesConstants.Motors.LEFT_DIR);
+                leftRear.setDirection(JulesConstants.Motors.BACK_LEFT_DIR);
             if (rightFront != null)
-                rightFront.setDirection(JulesConstants.Motors.RIGHT_DIR);
+                rightFront.setDirection(JulesConstants.Motors.FRONT_RIGHT_DIR);
             if (rightRear != null)
-                rightRear.setDirection(JulesConstants.Motors.RIGHT_DIR);
+                rightRear.setDirection(JulesConstants.Motors.BACK_RIGHT_DIR);
 
             // Battery compensation
             for (VoltageSensor sensor : hardwareMap.getAll(VoltageSensor.class)) {
@@ -114,6 +135,53 @@ public class JulesRobot {
         }
     }
 
+    private void initLinkManager() {
+        try {
+            linkManager = new JulesLinkManager();
+            // We need to pass the OpMode. But JulesRobot is instantiated inside OpMode.
+            // We don't have reference to 'this' OpMode here comfortably unless passed in
+            // constructor?
+            // JulesRobot ctor takes hardwareMap and telemetry.
+            // We might need to change JulesRobot ctor or assume we can pass null for now if
+            // LinkManager handles it?
+            // LinkManager.init(OpMode, ...)
+            // Use 'null' for OpMode for now if not strictly required, OR pass it if
+            // possible.
+            // Wait, JulesMasterController extends OpMode.
+            // Let's modify JulesRobot to take OpMode in constructor?
+            // For now, simpler:
+            if (opMode == null) {
+                RobotLog.w(TAG, "Cannot init LinkManager: OpMode is null");
+                return;
+            }
+            linkManager.init(opMode, hardwareMap, telemetry, opMode.gamepad1, opMode.gamepad2);
+            linkManager.start();
+
+            // Register command listener
+            linkManager.onConnected(() -> {
+                publishManifest();
+            });
+
+            linkManager.addCommandListener((type, payload) -> {
+                // Bridge the new command listener to the existing executeCommand logic
+                // Construct a synthetic event JSON or pass payload if structure matches
+                // executeCommand expects "type", "payload" etc. inside the JSON object.
+                // The 'payload' arg here IS the JSON object of the message?
+                // No, onCommand(String type, JsonObject payload)
+                // We can reconstruct the full object or adapt executeCommand.
+
+                com.google.gson.JsonObject event = new com.google.gson.JsonObject();
+                event.addProperty("type", type);
+                // If payload is the full object or sub-part? WsClient says: send(obj).
+                // handleInbound parses obj. type = obj.type.
+                // onCommand(type, obj). So 'payload' IS the full message object.
+                executeCommand(payload.toString());
+            });
+        } catch (Exception e) {
+            RobotLog.e(TAG, "Link Init Failed", e);
+        }
+    }
+
     private void initBridge() {
         try {
             bridgeManager = JulesBridgeManager.getInstance();
@@ -123,6 +191,16 @@ public class JulesRobot {
                 if (streamBus != null) {
                     subscription = streamBus.subscribe();
                 }
+
+                // Inject Battery Sensor
+                try {
+                    com.qualcomm.robotcore.hardware.VoltageSensor vs = hardwareMap.voltageSensor.iterator().next();
+                    bridgeManager.setBatterySensor(vs);
+                } catch (Exception ignored) {
+                }
+
+                // Ensure it starts
+                bridgeManager.start(null, null);
             }
         } catch (Exception e) {
             RobotLog.e(TAG, "Bridge Init Failed", e);
@@ -150,33 +228,82 @@ public class JulesRobot {
     }
 
     public void publish(String json) {
-        if (streamBus != null) {
+        if (bridgeManager != null && streamBus != null) {
             streamBus.publishJsonLine(json);
+        } else if (linkManager != null) {
+            linkManager.sendNdjson(json);
+        }
+    }
+
+    public void publishManifest() {
+        if (bridgeManager != null) {
+            // Ensure bridge has the latest scanner reference
+            bridgeManager.setHardwareScanner(scanner);
+            bridgeManager.publishManifest();
+        } else if (scanner != null) {
+            // Fallback for legacy or debugging
+            com.google.gson.JsonObject manifest = scanner.getManifest();
+            manifest.addProperty("type", "manifest");
+            manifest.addProperty("ts", System.currentTimeMillis());
+            publish(manifest.toString());
         }
     }
 
     /**
-     * Poll and execute commands from the JULES Bridge.
+     * Poll and execute commands from the JULES Bridge (via JulesCommand mailbox).
      * Call this in your OpMode loop().
      */
     public void processCommands() {
-        if (subscription == null)
+        String cmd = org.firstinspires.ftc.teamcode.jules.bridge.JulesCommand.getAndClearCommand();
+        if (cmd == null || cmd.isEmpty())
             return;
 
-        String line;
-        while ((line = subscription.poll()) != null) {
-            try {
-                com.google.gson.JsonObject event = org.firstinspires.ftc.teamcode.jules.bridge.util.GsonCompat
-                        .parse(line).getAsJsonObject();
-                if (event.has("type") && "cmd".equals(event.get("type").getAsString())) {
-                    String commandText = event.has("text") ? event.get("text").getAsString() : "";
-                    if (!commandText.isEmpty()) {
-                        executeCommand(commandText);
+        com.qualcomm.robotcore.util.RobotLog.i("JulesRobot", "Processing command: " + cmd);
+
+        try {
+            // JSON payload → route through executeCommand()
+            if (cmd.trim().startsWith("{")) {
+                executeCommand(cmd);
+                return;
+            }
+
+            // Legacy string commands
+            if (cmd.startsWith("DRIVE_")) {
+                String[] parts = cmd.split("_");
+                if (parts.length >= 4) {
+                    String direction = parts[1];
+                    double time = Double.parseDouble(parts[2].replace("T", ""));
+                    double power = Double.parseDouble(parts[3].replace("P", ""));
+                    switch (direction.toUpperCase()) {
+                        case "FORWARD":
+                            setDrivePowers(power, power, power, power);
+                            break;
+                        case "BACKWARD":
+                            setDrivePowers(-power, -power, -power, -power);
+                            break;
+                        case "LEFT":
+                            setDrivePowers(-power, power, power, -power);
+                            break;
+                        case "RIGHT":
+                            setDrivePowers(power, -power, -power, power);
+                            break;
                     }
                 }
-            } catch (Exception ignored) {
-                // Ignore non-JSON or malformed events
+            } else if ("STOP".equalsIgnoreCase(cmd)) {
+                setDrivePowers(0, 0, 0, 0);
             }
+        } catch (Exception e) {
+            com.qualcomm.robotcore.util.RobotLog.e("JulesRobot", "Command error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Call in loop() to check auto-stop timer.
+     */
+    public void checkAutoStop() {
+        if (driveStopTime > 0 && System.currentTimeMillis() >= driveStopTime) {
+            setDrivePowers(0, 0, 0, 0);
+            driveStopTime = 0;
         }
     }
 
@@ -190,14 +317,22 @@ public class JulesRobot {
             String type = cmd.has("type") ? cmd.get("type").getAsString() : "";
 
             // Handle "type": "motor"/"servo" (Low-Level)
-            // String type = cmd.has("type") ? cmd.get("type").getAsString() : ""; //
-            // Already defined above
             if ("motor".equals(type)) {
                 String id = cmd.has("id") ? cmd.get("id").getAsString() : "";
                 DcMotor motor = scanner.getMotor(id);
                 if (motor != null) {
                     if (cmd.has("power")) {
                         motor.setPower(cmd.get("power").getAsDouble());
+                    }
+                } else {
+                    String msg = "Motor '" + id + "' not found. Available: " + scanner.motors.keySet();
+                    RobotLog.w(TAG, msg);
+                    if (bridgeManager != null && streamBus != null) {
+                        com.google.gson.JsonObject err = new com.google.gson.JsonObject();
+                        err.addProperty("type", "log");
+                        err.addProperty("level", "warn");
+                        err.addProperty("message", msg);
+                        streamBus.publishJsonLine(err.toString());
                     }
                 }
                 return;
@@ -208,45 +343,71 @@ public class JulesRobot {
                     if (cmd.has("position")) {
                         servo.setPosition(cmd.get("position").getAsDouble());
                     }
+                } else {
+                    String msg = "Servo '" + id + "' not found. Available: " + scanner.servos.keySet();
+                    RobotLog.w(TAG, msg);
+                    if (bridgeManager != null && streamBus != null) {
+                        com.google.gson.JsonObject err = new com.google.gson.JsonObject();
+                        err.addProperty("type", "log");
+                        err.addProperty("level", "warn");
+                        err.addProperty("message", msg);
+                        streamBus.publishJsonLine(err.toString());
+                    }
                 }
                 return;
             }
 
-            // Handle "name": "drive", "args": {...} (High-Level)
-            if (cmd.has("name") && "drive".equals(cmd.get("name").getAsString())) {
-                if (cmd.has("args")) {
-                    com.google.gson.JsonObject args = cmd.get("args").getAsJsonObject();
-                    // Mapping: t = throttle (y), p = pivot/turn (rx), s = strafe (x)
+            // Handle "name": "<command>", "args": {...} (High-Level)
+            String name = cmd.has("name") ? cmd.get("name").getAsString() : "";
+            com.google.gson.JsonObject args = (cmd.has("args") && cmd.get("args").isJsonObject())
+                    ? cmd.get("args").getAsJsonObject()
+                    : new com.google.gson.JsonObject();
+
+            // Read duration for auto-stop
+            long durationMs = args.has("duration_ms") ? args.get("duration_ms").getAsLong() : 0;
+
+            switch (name.toLowerCase()) {
+                case "drive": {
                     double t = args.has("t") ? args.get("t").getAsDouble() : 0.0;
                     double p = args.has("p") ? args.get("p").getAsDouble() : 0.0;
-                    double s = args.has("s") ? args.get("s").getAsDouble() : 0.0; // Optional strafe
+                    double s = args.has("s") ? args.get("s").getAsDouble() : 0.0;
 
-                    // Mecanum mixer
-                    double y = -t; // Forward is usually negative Y in gamepad, but positive here?
-                                   // Let's assume input t is positive forward.
-                                   // Robot.setDrivePowers usually expects:
-                                   // lf = y + x + rx
-                                   // If t is 0.5 (forward), we want positive power?
-                                   // In TeleOp: y = -gamepad1.left_stick_y. Up on stick is -1. So y is 1.
-                                   // So t should be positive for forward.
-
-                    double rx = p;
-                    double x = s;
-
-                    double denominator = Math.max(Math.abs(t) + Math.abs(x) + Math.abs(rx), 1.0);
-                    double lf = (t + x + rx) / denominator;
-                    double lr = (t - x + rx) / denominator;
-                    double rf = (t - x - rx) / denominator;
-                    double rr = (t + x - rx) / denominator;
-
+                    double y = t, rx = p, x = s;
+                    double denom = Math.max(Math.abs(y) + Math.abs(x) + Math.abs(rx), 1.0);
+                    double lf = (y + x + rx) / denom;
+                    double lr = (y - x + rx) / denom;
+                    double rf = (y - x - rx) / denom;
+                    double rr = (y + x - rx) / denom;
                     setDrivePowers(lf, lr, rf, rr);
-
-                    // NOTE: duration_ms handling requires async scheduling which isn't implemented
-                    // yet.
-                    // This command sets immediate power. The sender (LLM) should send a stop
-                    // command (t=0) later,
-                    // or we need a non-blocking timer in processCommands().
+                    break;
                 }
+                case "strafe": {
+                    double speed = args.has("speed") ? args.get("speed").getAsDouble() : 0.4;
+                    // Strafe: positive speed = right, negative = left
+                    // Mecanum strafe right: LF-, LR+, RF+, RR-
+                    setDrivePowers(-speed, speed, speed, -speed);
+                    break;
+                }
+                case "turn": {
+                    double speed = args.has("speed") ? args.get("speed").getAsDouble() : 0.3;
+                    // Turn: positive speed = right, negative = left
+                    // In-place turn right: LF-, LR-, RF+, RR+
+                    setDrivePowers(-speed, -speed, speed, speed);
+                    break;
+                }
+                case "stop": {
+                    setDrivePowers(0, 0, 0, 0);
+                    driveStopTime = 0; // Cancel any pending auto-stop
+                    return;
+                }
+                default:
+                    RobotLog.w(TAG, "Unknown command name: " + name);
+                    return;
+            }
+
+            // Set auto-stop timer if duration provided
+            if (durationMs > 0) {
+                driveStopTime = System.currentTimeMillis() + durationMs;
             }
         } catch (Exception e) {
             RobotLog.e(TAG, "Command execution failed: " + e.getMessage());

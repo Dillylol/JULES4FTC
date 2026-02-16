@@ -13,8 +13,8 @@ import com.qualcomm.robotcore.hardware.DcMotorSimple;
 public class JulesConstants {
 
     // ---------------- Configuration Flags ----------------
-    public static boolean USE_ODOMETRY = true; // Set to false if no odometry pods
-    public static boolean USE_WEBCAM = true; // Set to false if no camera
+    public static boolean USE_ODOMETRY = false; // Set to false if no odometry pods
+    public static boolean USE_WEBCAM = false; // Set to false if no camera
     public static boolean USE_BATTERY_OPTIMIZATION = true; // Scale power based on voltage
     public static boolean USE_PEDRO_PATHING = false; // Toggle for Pedro Pathing
 
@@ -26,8 +26,10 @@ public class JulesConstants {
         public static final String BACK_RIGHT = "rr";
 
         // Directions
-        public static final DcMotorSimple.Direction LEFT_DIR = DcMotorSimple.Direction.REVERSE;
-        public static final DcMotorSimple.Direction RIGHT_DIR = DcMotorSimple.Direction.FORWARD;
+        public static final DcMotorSimple.Direction FRONT_LEFT_DIR = DcMotorSimple.Direction.FORWARD;
+        public static final DcMotorSimple.Direction FRONT_RIGHT_DIR = DcMotorSimple.Direction.REVERSE;
+        public static final DcMotorSimple.Direction BACK_LEFT_DIR = DcMotorSimple.Direction.FORWARD;
+        public static final DcMotorSimple.Direction BACK_RIGHT_DIR = DcMotorSimple.Direction.REVERSE;
     }
 
     public static final class Sensors {

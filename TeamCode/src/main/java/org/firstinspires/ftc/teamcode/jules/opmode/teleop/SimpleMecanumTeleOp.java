@@ -25,8 +25,8 @@ public class SimpleMecanumTeleOp extends OpMode {
         // Mecanum drive control
         // Left stick for translation (y, x), Right stick for rotation (rx)
         double y = -gamepad1.left_stick_y; // Remember, Y stick value is reversed
-        double x = gamepad1.left_stick_x * 1.1; // Counteract imperfect strafing
-        double rx = gamepad1.right_stick_x;
+        double x = -gamepad1.left_stick_x * 1.1; // Counteract imperfect strafing (Inverted per user request)
+        double rx = -gamepad1.right_stick_x; // (Inverted per user request)
 
         // Denominator is the largest motor power (absolute value) or 1
         // This ensures all the powers maintain the same ratio,
@@ -47,6 +47,22 @@ public class SimpleMecanumTeleOp extends OpMode {
         if (robot.batterySensor != null) {
             telemetry.addData("Battery", "%.2f V", robot.batterySensor.getVoltage());
         }
+
+        // --- JULES App Integration ---
+        // 1. Update internal systems (e.g. Pedro Pathing)
+        robot.update();
+
+        // 2. Execute commands received from the App
+        robot.processCommands();
+
+        // 3. Send telemetry back to the App
+        // We wrap the standard telemetry data in a JSON object
+        com.google.gson.JsonObject telem = robot.getTelemetryData();
+        telem.addProperty("type", "telemetry");
+        telem.addProperty("ts", System.currentTimeMillis());
+        // Add specific TeleOp data if needed
+        telem.addProperty("opmode", "SimpleMecanumTeleOp");
+        robot.publish(telem.toString());
     }
 
     @Override

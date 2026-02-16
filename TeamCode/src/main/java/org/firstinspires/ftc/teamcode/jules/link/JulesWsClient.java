@@ -9,7 +9,6 @@ import com.qualcomm.robotcore.util.RobotLog;
 import java.util.Map;
 import org.firstinspires.ftc.teamcode.jules.bridge.util.GsonCompat; // if you haven’t added it yet
 
-
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -31,7 +30,12 @@ public class JulesWsClient {
 
     public interface ConnectionListener {
         void onOpen();
+
         void onClosed();
+    }
+
+    public interface CommandListener {
+        void onCommand(String type, JsonObject payload);
     }
 
     private static final String TAG = "JulesWsClient";
@@ -48,6 +52,7 @@ public class JulesWsClient {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private int reconnectAttempts = 0;
     private final CopyOnWriteArrayList<ConnectionListener> listeners = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<CommandListener> commandListeners = new CopyOnWriteArrayList<>();
 
     public JulesWsClient(String url) {
         this.url = url;
@@ -77,6 +82,18 @@ public class JulesWsClient {
     public void removeConnectionListener(ConnectionListener listener) {
         if (listener != null) {
             listeners.remove(listener);
+        }
+    }
+
+    public void addCommandListener(CommandListener listener) {
+        if (listener != null) {
+            commandListeners.addIfAbsent(listener);
+        }
+    }
+
+    public void removeCommandListener(CommandListener listener) {
+        if (listener != null) {
+            commandListeners.remove(listener);
         }
     }
 
@@ -234,6 +251,15 @@ public class JulesWsClient {
             } else if ("cmd".equals(type)) {
                 RobotLog.ii(TAG, "Received cmd frame: %s", text);
                 sendAck(obj);
+            } else {
+                // Dispatch other commands (e.g. exec_pyscript, stop_robot)
+                for (CommandListener l : commandListeners) {
+                    try {
+                        l.onCommand(type, obj);
+                    } catch (Exception ex) {
+                        RobotLog.ee(TAG, ex, "CommandListener.onCommand failure");
+                    }
+                }
             }
         } catch (Exception e) {
             Log.w(TAG, "Failed to parse inbound WS message", e);
@@ -248,4 +274,3 @@ public class JulesWsClient {
         send(ack);
     }
 }
-

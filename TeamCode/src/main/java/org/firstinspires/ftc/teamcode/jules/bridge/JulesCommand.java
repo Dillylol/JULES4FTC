@@ -7,6 +7,7 @@ public class JulesCommand {
 
     /**
      * Sets the next command to be executed. This is called by the HTTP bridge.
+     * 
      * @param command The full command string (e.g., "DRIVE_FORWARD_2T_0.5P").
      */
     public static synchronized void setCommand(String command) {
@@ -18,8 +19,16 @@ public class JulesCommand {
     }
 
     /**
+     * Peeks at the current command without clearing it (for telemetry display).
+     */
+    public static synchronized String peekCommand() {
+        return currentCommand;
+    }
+
+    /**
      * Gets the current command and immediately clears it to prevent re-execution.
      * This is called by the JulesDevController OpMode.
+     * 
      * @return The command string, or null if no new command is present.
      */
     public static synchronized String getAndClearCommand() {

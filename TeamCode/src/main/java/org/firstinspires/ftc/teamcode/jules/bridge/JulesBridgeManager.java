@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 
 import com.bylazar.telemetry.TelemetryManager;
 import com.google.gson.JsonObject;
+import com.qualcomm.robotcore.hardware.VoltageSensor;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.jules.JulesBuilder;
@@ -25,10 +26,12 @@ import java.util.concurrent.TimeUnit;
 /**
  * Singleton holder for the persistent JULES bridge components.
  *
- * <p>The manager owns the shared metric buffer, stream bus, HTTP bridge and
+ * <p>
+ * The manager owns the shared metric buffer, stream bus, HTTP bridge and
  * background heartbeats. OpModes can grab a transmitter/receiver without
  * worrying about when the bridge started; the {@link JulesBridgeSwitch}
- * OpMode is responsible for toggling the connection on and off.</p>
+ * OpMode is responsible for toggling the connection on and off.
+ * </p>
  */
 public final class JulesBridgeManager {
 
@@ -45,15 +48,15 @@ public final class JulesBridgeManager {
         public final String wsUrl;
 
         Status(boolean running,
-               String ip,
-               int port,
-               String token,
-               String maskedToken,
-               long uptimeMs,
-               int retryCount,
-               String advertiseLine,
-               String lastError,
-               String wsUrl) {
+                String ip,
+                int port,
+                String token,
+                String maskedToken,
+                long uptimeMs,
+                int retryCount,
+                String advertiseLine,
+                String lastError,
+                String wsUrl) {
             this.running = running;
             this.ip = ip;
             this.port = port;
@@ -97,6 +100,13 @@ public final class JulesBridgeManager {
 
     // Dynamic Hardware Scanner
     private org.firstinspires.ftc.teamcode.jules.core.JulesHardwareScanner scanner;
+    private VoltageSensor batterySensor;
+
+    public void setBatterySensor(VoltageSensor sensor) {
+        synchronized (lock) {
+            this.batterySensor = sensor;
+        }
+    }
 
     public void setHardwareScanner(org.firstinspires.ftc.teamcode.jules.core.JulesHardwareScanner scanner) {
         synchronized (lock) {
@@ -107,6 +117,24 @@ public final class JulesBridgeManager {
     public org.firstinspires.ftc.teamcode.jules.core.JulesHardwareScanner getHardwareScanner() {
         synchronized (lock) {
             return scanner;
+        }
+    }
+
+    public void publishManifest() {
+        JulesStreamBus bus;
+        org.firstinspires.ftc.teamcode.jules.core.JulesHardwareScanner s;
+        synchronized (lock) {
+            if (!running || streamBus == null) {
+                return;
+            }
+            bus = streamBus;
+            s = scanner;
+        }
+
+        if (s != null) {
+            JsonObject manifest = s.getManifest();
+            manifest.addProperty("type", "manifest");
+            bus.publishJsonLine(manifest.toString());
         }
     }
 
@@ -182,9 +210,8 @@ public final class JulesBridgeManager {
             final String ip = (ipOverride != null && !ipOverride.isEmpty())
                     ? ipOverride
                     : defaultIp();
-            final String token = (tokenOverride != null && !tokenOverride.isEmpty())
-                    ? tokenOverride
-                    : ensureToken(null);
+            // Auth disabled: always use empty token so all connections are accepted
+            final String token = "";
 
             lastIp = ip;
             lastToken = token;
@@ -255,12 +282,25 @@ public final class JulesBridgeManager {
                 ip = lastIp != null ? lastIp : defaultIp();
                 token = lastToken;
                 uptime = System.currentTimeMillis() - startTimestampMs;
+                uptime = System.currentTimeMillis() - startTimestampMs;
                 beacon = udpBeacon;
             }
+
+            double vbatt = 0.0;
+            synchronized (lock) {
+                if (batterySensor != null) {
+                    try {
+                        vbatt = batterySensor.getVoltage();
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+
             long now = System.currentTimeMillis();
             JsonObject heartbeat = new JsonObject();
             heartbeat.addProperty("type", "heartbeat");
             heartbeat.addProperty("ts_ms", now);
+            heartbeat.addProperty("vbatt", vbatt);
             heartbeat.addProperty("uptime_ms", uptime);
             heartbeat.addProperty("ip", ip);
             heartbeat.addProperty("port", PORT);
@@ -285,8 +325,8 @@ public final class JulesBridgeManager {
 
     /** Provide a transmitter bound to the shared buffer/bus if available. */
     public JulesRamTx getTransmitter(TelemetryManager panelsTelemetry,
-                                     Telemetry dsTelemetry,
-                                     String topicPrefix) {
+            Telemetry dsTelemetry,
+            String topicPrefix) {
         synchronized (lock) {
             if (buffer != null && streamBus != null) {
                 return new JulesRamTx(buffer, streamBus, panelsTelemetry, dsTelemetry, topicPrefix);
@@ -297,8 +337,8 @@ public final class JulesBridgeManager {
 
     /** Convenience wrapper to build a {@link JulesBuilder} directly. */
     public JulesBuilder newBuilder(TelemetryManager panelsTelemetry,
-                                   Telemetry dsTelemetry,
-                                   String topicPrefix) {
+            Telemetry dsTelemetry,
+            String topicPrefix) {
         return new JulesBuilder(getTransmitter(panelsTelemetry, dsTelemetry, topicPrefix));
     }
 
@@ -323,8 +363,8 @@ public final class JulesBridgeManager {
                     failureCount,
                     getAdvertiseLineInternal(),
                     lastError,
-                    lastWsUrl != null ? lastWsUrl : JulesHttpBridge.websocketUrlFor(lastIp != null ? lastIp : defaultIp(), PORT)
-            );
+                    lastWsUrl != null ? lastWsUrl
+                            : JulesHttpBridge.websocketUrlFor(lastIp != null ? lastIp : defaultIp(), PORT));
         }
     }
 
@@ -434,7 +474,7 @@ public final class JulesBridgeManager {
         }
 
         try {
-            newBridge = new JulesHttpBridge(PORT, newAdapter, newAdapter, token, newStreamBus);
+            newBridge = new JulesHttpBridge(PORT, newAdapter, newAdapter, "", newStreamBus); // empty token = no auth
         } catch (IOException e) {
             safeClose(newStreamBus);
             safeClose(newUdpBeacon);
