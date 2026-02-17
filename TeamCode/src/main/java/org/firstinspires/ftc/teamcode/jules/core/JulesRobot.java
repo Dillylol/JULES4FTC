@@ -34,6 +34,7 @@ public class JulesRobot {
     public VoltageSensor batterySensor;
     public IMU imu;
     public Follower follower; // Pedro Pathing
+    public final JulesPathInterpreter pathInterpreter = new JulesPathInterpreter();
 
     // JULES Link
     public JulesLinkManager linkManager;
@@ -239,11 +240,48 @@ public class JulesRobot {
         if (bridgeManager != null) {
             // Ensure bridge has the latest scanner reference
             bridgeManager.setHardwareScanner(scanner);
-            bridgeManager.publishManifest();
+
+            // Inject Pedro Pathing capability into manifest before publishing
+            if (scanner != null) {
+                com.google.gson.JsonObject manifest = scanner.getManifest();
+                manifest.addProperty("type", "manifest");
+
+                // Advertise Pedro Pathing capability
+                manifest.addProperty("pedro_pathing", JulesConstants.USE_PEDRO_PATHING);
+                manifest.addProperty("pedro_active", (follower != null));
+
+                // Tag drivetrain motors so UI can warn about conflicts
+                com.google.gson.JsonArray dtMotors = new com.google.gson.JsonArray();
+                dtMotors.add(JulesConstants.Motors.FRONT_LEFT);
+                dtMotors.add(JulesConstants.Motors.FRONT_RIGHT);
+                dtMotors.add(JulesConstants.Motors.BACK_LEFT);
+                dtMotors.add(JulesConstants.Motors.BACK_RIGHT);
+                manifest.add("drivetrain_motors", dtMotors);
+
+                if (JulesConstants.USE_PEDRO_PATHING) {
+                    com.google.gson.JsonObject pathCaps = new com.google.gson.JsonObject();
+                    pathCaps.addProperty("linear", true);
+                    pathCaps.addProperty("tangential", true);
+                    pathCaps.addProperty("constant", true);
+                    manifest.add("path_capabilities", pathCaps);
+                    manifest.addProperty("drive_mode", "pedro_pathing");
+                } else {
+                    manifest.addProperty("drive_mode", "power_time");
+                }
+
+                JulesStreamBus bus = bridgeManager.getStreamBus();
+                if (bus != null) {
+                    bus.publishJsonLine(manifest.toString());
+                }
+            } else {
+                bridgeManager.publishManifest();
+            }
         } else if (scanner != null) {
             // Fallback for legacy or debugging
             com.google.gson.JsonObject manifest = scanner.getManifest();
             manifest.addProperty("type", "manifest");
+            manifest.addProperty("pedro_pathing", JulesConstants.USE_PEDRO_PATHING);
+            manifest.addProperty("pedro_active", (follower != null));
             manifest.addProperty("ts", System.currentTimeMillis());
             publish(manifest.toString());
         }
@@ -401,8 +439,45 @@ public class JulesRobot {
                     return;
                 }
                 default:
-                    RobotLog.w(TAG, "Unknown command name: " + name);
+                    break;
+            }
+
+            // ───── Path Commands (Pedro Pathing Dynamic) ─────
+            switch (name.toLowerCase()) {
+                case "path_start": {
+                    pathInterpreter.reset();
+                    RobotLog.i(TAG, "Path interpreter: reset");
                     return;
+                }
+                case "path_add": {
+                    String pt = args.has("pathType") ? args.get("pathType").getAsString() : "linear";
+                    double px = args.has("x") ? args.get("x").getAsDouble() : 0;
+                    double py = args.has("y") ? args.get("y").getAsDouble() : 0;
+                    double sh = args.has("startHeading") ? args.get("startHeading").getAsDouble() : 0;
+                    double eh = args.has("endHeading") ? args.get("endHeading").getAsDouble() : 0;
+                    double hd = args.has("heading") ? args.get("heading").getAsDouble() : 0;
+                    boolean rev = args.has("reverse") && args.get("reverse").getAsBoolean();
+                    pathInterpreter.addSegment(pt, px, py, sh, eh, hd, rev);
+                    RobotLog.i(TAG, "Path interpreter: added " + pt + " segment");
+                    return;
+                }
+                case "path_follow": {
+                    if (follower != null) {
+                        boolean ok = pathInterpreter.execute(follower);
+                        RobotLog.i(TAG, "Path interpreter: follow -> " + (ok ? "success" : "failed"));
+                    } else {
+                        RobotLog.w(TAG, "Path interpreter: follower is null, cannot execute");
+                    }
+                    return;
+                }
+                default:
+                    // Not a path command — check if it's an unrecognized drive command
+                    if (!name.isEmpty()
+                            && !"drive".equals(name) && !"strafe".equals(name)
+                            && !"turn".equals(name) && !"stop".equals(name)) {
+                        RobotLog.w(TAG, "Unknown command name: " + name);
+                    }
+                    break;
             }
 
             // Set auto-stop timer if duration provided
@@ -448,6 +523,8 @@ public class JulesRobot {
                     data.addProperty("h", Math.toDegrees(pose.getHeading()));
                 }
             }
+            data.addProperty("path_segments", pathInterpreter.getSegmentCount());
+            data.addProperty("path_building", pathInterpreter.isActive());
         } else {
             data.addProperty("pedro_active", false);
         }

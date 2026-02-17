@@ -28,7 +28,7 @@ public class JulesMotorTester extends OpMode {
     private DcMotor leftFront, leftRear, rightFront, rightRear;
     private String selectedName = "leftFront";
     private DcMotor selectedMotor;
-    private boolean prevUp, prevRight, prevDown, prevLeft;
+    private boolean prevUp, prevRight, prevDown, prevLeft, prevY;
     private static final double TEST_POWER = 0.3;
 
     @Override
@@ -80,6 +80,18 @@ public class JulesMotorTester extends OpMode {
         prevDown = gamepad1.dpad_down;
         prevLeft = gamepad1.dpad_left;
 
+        // --- Y button to toggle direction of selected motor ---
+        if (gamepad1.y && !prevY) {
+            if (selectedMotor != null) {
+                if (selectedMotor.getDirection() == DcMotor.Direction.FORWARD) {
+                    selectedMotor.setDirection(DcMotor.Direction.REVERSE);
+                } else {
+                    selectedMotor.setDirection(DcMotor.Direction.FORWARD);
+                }
+            }
+        }
+        prevY = gamepad1.y;
+
         // --- Bumpers spin the selected motor ---
         if (selectedMotor != null) {
             if (gamepad1.right_bumper) {
@@ -105,19 +117,27 @@ public class JulesMotorTester extends OpMode {
         telemetry.addData("Power", selectedMotor != null ? String.format("%.2f", selectedMotor.getPower()) : "N/A");
         telemetry.addLine();
         telemetry.addData("Controls", "D-pad=select | RB=fwd | LB=rev");
-        telemetry.addData("         ", "A=all fwd | B=stop all");
+        telemetry.addData("         ", "A=all fwd | B=stop all | Y=toggle dir");
         telemetry.addLine();
         telemetry.addData("LF (" + JulesConstants.Motors.FRONT_LEFT + ")",
-                leftFront != null ? String.format("%.2f  dir=%s", leftFront.getPower(), leftFront.getDirection())
+                leftFront != null
+                        ? String.format("%.2f  dir=%s  pos=%d", leftFront.getPower(), leftFront.getDirection(),
+                                leftFront.getCurrentPosition())
                         : "NULL");
         telemetry.addData("RF (" + JulesConstants.Motors.FRONT_RIGHT + ")",
-                rightFront != null ? String.format("%.2f  dir=%s", rightFront.getPower(), rightFront.getDirection())
+                rightFront != null
+                        ? String.format("%.2f  dir=%s  pos=%d", rightFront.getPower(), rightFront.getDirection(),
+                                rightFront.getCurrentPosition())
                         : "NULL");
         telemetry.addData("LR (" + JulesConstants.Motors.BACK_LEFT + ")",
-                leftRear != null ? String.format("%.2f  dir=%s", leftRear.getPower(), leftRear.getDirection())
+                leftRear != null
+                        ? String.format("%.2f  dir=%s  pos=%d", leftRear.getPower(), leftRear.getDirection(),
+                                leftRear.getCurrentPosition())
                         : "NULL");
         telemetry.addData("RR (" + JulesConstants.Motors.BACK_RIGHT + ")",
-                rightRear != null ? String.format("%.2f  dir=%s", rightRear.getPower(), rightRear.getDirection())
+                rightRear != null
+                        ? String.format("%.2f  dir=%s  pos=%d", rightRear.getPower(), rightRear.getDirection(),
+                                rightRear.getCurrentPosition())
                         : "NULL");
     }
 

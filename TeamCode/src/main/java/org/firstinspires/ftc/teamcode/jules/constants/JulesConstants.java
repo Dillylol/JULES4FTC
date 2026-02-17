@@ -13,10 +13,9 @@ import com.qualcomm.robotcore.hardware.DcMotorSimple;
 public class JulesConstants {
 
     // ---------------- Configuration Flags ----------------
-    public static boolean USE_ODOMETRY = false; // Set to false if no odometry pods
+    public static boolean USE_PEDRO_PATHING = false; // Enables Pedro Pathing + Odometry
     public static boolean USE_WEBCAM = false; // Set to false if no camera
     public static boolean USE_BATTERY_OPTIMIZATION = true; // Scale power based on voltage
-    public static boolean USE_PEDRO_PATHING = false; // Toggle for Pedro Pathing
 
     // ---------------- Hardware Map Names ----------------
     public static final class Motors {
